@@ -69,14 +69,16 @@ fn gen_rules() -> [Vec<Elem>; 6] {
         vec![Elem::Terminal(Token::Eol)],
         vec![Elem::Terminal(Token::Eol), Elem::Rule(Rule::Stmts)],
         vec![],
-        vec![Elem::Terminal(Token::Print), Elem::Terminal(Token::StrLit(Default::default()))],
+        vec![
+            Elem::Terminal(Token::Print),
+            Elem::Terminal(Token::StrLit(Default::default())),
+        ],
         vec![],
     ]
 }
 
 #[derive(Debug, PartialEq)]
-pub enum PolyBlock {
-}
+pub enum PolyBlock {}
 
 type Reducer = fn(Vec<&PolyBlock>) -> PolyBlock;
 
@@ -114,7 +116,11 @@ impl<T> ReduceTree<T> {
         }
     }
 
-    fn add_waiting(&mut self, reducer: fn(Vec<&T>) -> T, children_size: usize) -> Result<(), ReduceTreeError> {
+    fn add_waiting(
+        &mut self,
+        reducer: fn(Vec<&T>) -> T,
+        children_size: usize,
+    ) -> Result<(), ReduceTreeError> {
         println!("add_waiting {} to {}", self.nodes.len(), self.current);
         if self.has_all_child(self.current) {
             return Err(ReduceTreeError::ChildrenOverflow);
@@ -125,9 +131,9 @@ impl<T> ReduceTree<T> {
             reducer: Some(reducer),
             children_size,
             children: Vec::new(),
-            remain: children_size
+            remain: children_size,
         });
-        let child_id = self.nodes.len()-1;
+        let child_id = self.nodes.len() - 1;
         self.nodes[self.current].children.push(child_id);
         self.current = child_id;
         Ok(())
@@ -161,7 +167,11 @@ impl<T> ReduceTree<T> {
     fn reduce(&mut self) {
         if self.ready_to_reduce(self.current) {
             println!("reduce {}", self.current);
-            let children = self.nodes[self.current].children.iter().map(|c| self.nodes[*c].reduced.as_ref().unwrap()).collect::<Vec<&T>>();
+            let children = self.nodes[self.current]
+                .children
+                .iter()
+                .map(|c| self.nodes[*c].reduced.as_ref().unwrap())
+                .collect::<Vec<&T>>();
             let reducer = self.nodes[self.current].reducer.unwrap();
             let reduced = reducer(children);
             let parent = self.nodes[self.current].parent;
@@ -186,43 +196,88 @@ mod test_reduce_tree {
     }
 
     fn reduce(children: Vec<&NTree>) -> NTree {
-        let mut id = children.iter().map(|nt| nt.id.as_str()).collect::<Vec<&str>>().connect(" ");
+        let mut id = children
+            .iter()
+            .map(|nt| nt.id.as_str())
+            .collect::<Vec<&str>>()
+            .connect(" ");
         NTree {
             id: format!("({})", id),
-            children: children.into_iter().map(|nt| nt.clone()).collect::<Vec<NTree>>(),
+            children: children
+                .into_iter()
+                .map(|nt| nt.clone())
+                .collect::<Vec<NTree>>(),
         }
     }
 
     #[test]
     fn test() {
         let mut tree = ReduceTree::new(reduce, 2);
-        tree.add_term(NTree {id: "1".to_owned(), children: Vec::new()});
-        tree.add_term(NTree {id: "2".to_owned(), children: Vec::new()});
-        assert_eq!(tree.nodes[0].reduced.as_ref().unwrap().id, "(1 2)".to_owned());
+        tree.add_term(NTree {
+            id: "1".to_owned(),
+            children: Vec::new(),
+        });
+        tree.add_term(NTree {
+            id: "2".to_owned(),
+            children: Vec::new(),
+        });
+        assert_eq!(
+            tree.nodes[0].reduced.as_ref().unwrap().id,
+            "(1 2)".to_owned()
+        );
         let mut tree = ReduceTree::new(reduce, 2);
-        tree.add_term(NTree {id: "1".to_owned(), children: Vec::new()});
+        tree.add_term(NTree {
+            id: "1".to_owned(),
+            children: Vec::new(),
+        });
         tree.add_waiting(reduce, 3);
-        tree.add_term(NTree {id: "2".to_owned(), children: Vec::new()});
-        tree.add_term(NTree {id: "3".to_owned(), children: Vec::new()});
-        tree.add_term(NTree {id: "4".to_owned(), children: Vec::new()});
-        assert_eq!(tree.nodes[0].reduced.as_ref().unwrap().id, "(1 (2 3 4))".to_owned());
+        tree.add_term(NTree {
+            id: "2".to_owned(),
+            children: Vec::new(),
+        });
+        tree.add_term(NTree {
+            id: "3".to_owned(),
+            children: Vec::new(),
+        });
+        tree.add_term(NTree {
+            id: "4".to_owned(),
+            children: Vec::new(),
+        });
+        assert_eq!(
+            tree.nodes[0].reduced.as_ref().unwrap().id,
+            "(1 (2 3 4))".to_owned()
+        );
         let mut tree = ReduceTree::new(reduce, 2);
         tree.add_waiting(reduce, 2);
-        tree.add_term(NTree {id: "1".to_owned(), children: Vec::new()});
-        tree.add_term(NTree {id: "2".to_owned(), children: Vec::new()});
+        tree.add_term(NTree {
+            id: "1".to_owned(),
+            children: Vec::new(),
+        });
+        tree.add_term(NTree {
+            id: "2".to_owned(),
+            children: Vec::new(),
+        });
         tree.add_waiting(reduce, 2);
-        tree.add_term(NTree {id: "3".to_owned(), children: Vec::new()});
-        tree.add_term(NTree {id: "4".to_owned(), children: Vec::new()});
-        assert_eq!(tree.nodes[0].reduced.as_ref().unwrap().id, "((1 2) (3 4))".to_owned());
+        tree.add_term(NTree {
+            id: "3".to_owned(),
+            children: Vec::new(),
+        });
+        tree.add_term(NTree {
+            id: "4".to_owned(),
+            children: Vec::new(),
+        });
+        assert_eq!(
+            tree.nodes[0].reduced.as_ref().unwrap().id,
+            "((1 2) (3 4))".to_owned()
+        );
     }
 }
-
 
 // PRINT STRLIT EOL EOF
 const TBL: [[Option<usize>; 4]; 3] = [
     [Some(0), None, Some(1), Some(5)],
     [None, None, Some(2), Some(3)],
-    [Some(4), None, None,None],
+    [Some(4), None, None, None],
 ];
 
 pub fn ll1(mut tokens: Vec<Token>) -> Result<Ast, Error> {
