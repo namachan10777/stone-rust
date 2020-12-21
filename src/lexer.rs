@@ -3,7 +3,7 @@ use crate::Error;
 
 const PRINT: &'static str = "print";
 
-fn lex(src: &str) -> Result<Vec<Token>, Error> {
+pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
     let mut tokens = Vec::new();
     let mut beg = 0;
     loop {

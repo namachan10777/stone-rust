@@ -14,8 +14,9 @@ pub enum Error {
     RuntimeError(vm::Exception),
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Ast {
+pub type Ast = Vec<Stmt>;
+#[derive(Debug, PartialEq, Clone)]
+pub enum Stmt {
     Print(String),
 }
 
@@ -43,7 +44,8 @@ pub struct Internal {
 
 pub fn entry(src_path: &str) -> Result<(), Error> {
     let src = fs::read_to_string(src_path).map_err(|_| Error::IOError)?;
-    let ast = parser::root(&src)?;
+    let tokens = lexer::lex(&src)?;
+    let ast = parser::ll1(tokens)?;
     let flat = ir::compile(ast);
     let mut vm = vm::Vm::compile(flat);
     vm.execute()
