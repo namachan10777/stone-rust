@@ -80,17 +80,18 @@ pub enum PolyBlock {
 
 type Reducer = fn(Vec<&PolyBlock>) -> PolyBlock;
 
-struct ReduceNode {
-    reduced: Option<PolyBlock>,
+struct ReduceNode<T> {
+    reduced: Option<T>,
     parent: usize,
     children_size: usize,
-    reducer: Option<Reducer>,
+    reducer: Option<fn(Vec<&T>) -> T>,
     children: Vec<usize>,
     remain: usize,
 }
 
-struct ReduceTree {
-    nodes: Vec<ReduceNode>,
+struct ReduceTree<T> {
+    nodes: Vec<ReduceNode<T>>,
+    current: usize,
 }
 
 enum ReduceTreeError {
@@ -98,8 +99,8 @@ enum ReduceTreeError {
     AlreadyReduced,
 }
 
-impl ReduceTree {
-    fn new(reducer: Reducer, children_size: usize) -> Self {
+impl<T> ReduceTree<T> {
+    fn new(reducer: fn(Vec<&T>) -> T, children_size: usize) -> Self {
         Self {
             nodes: vec![ReduceNode {
                 reduced: None,
@@ -109,23 +110,26 @@ impl ReduceTree {
                 children: Vec::new(),
                 remain: children_size,
             }],
+            current: 0,
         }
     }
 
-    fn add_waiting(&mut self, parent: usize, reducer: Reducer, children_size: usize) -> Result<(), ReduceTreeError> {
-        if self.has_all_child(parent) {
+    fn add_waiting(&mut self, reducer: fn(Vec<&T>) -> T, children_size: usize) -> Result<(), ReduceTreeError> {
+        println!("add_waiting {} to {}", self.nodes.len(), self.current);
+        if self.has_all_child(self.current) {
             return Err(ReduceTreeError::ChildrenOverflow);
         }
         self.nodes.push(ReduceNode {
             reduced: None,
-            parent,
+            parent: self.current,
             reducer: Some(reducer),
             children_size,
             children: Vec::new(),
             remain: children_size
         });
         let child_id = self.nodes.len()-1;
-        self.nodes[parent].children.push(child_id);
+        self.nodes[self.current].children.push(child_id);
+        self.current = child_id;
         Ok(())
     }
 
@@ -137,32 +141,79 @@ impl ReduceTree {
         self.has_all_child(id) && self.nodes[id].remain == 0
     }
 
-    fn add_term(&mut self, parent: usize, block: PolyBlock) -> Result<(), ReduceTreeError> {
+    fn add_term(&mut self, block: T) -> Result<(), ReduceTreeError> {
+        println!("add_term {} to {}", self.nodes.len(), self.current);
         self.nodes.push(ReduceNode {
             reduced: Some(block),
             reducer: None,
-            parent: parent,
+            parent: self.current,
             children_size: 0,
             children: Vec::new(),
             remain: 0,
         });
-        self.nodes[parent].remain -= 1;
-        if self.ready_to_reduce(parent) {
-            self.reduce(parent);
-        }
+        let term_id = self.nodes.len() - 1;
+        self.nodes[self.current].remain -= 1;
+        self.nodes[self.current].children.push(term_id);
+        self.reduce();
         Ok(())
     }
 
-    fn reduce(&mut self, id: usize) {
-        let children = self.nodes[id].children.iter().map(|c| self.nodes[*c].reduced.as_ref().unwrap()).collect::<Vec<&PolyBlock>>();
-        let reducer = self.nodes[id].reducer.unwrap();
-        let reduced = reducer(children);
-        let parent = self.nodes[id].parent;
-        self.nodes[id].reduced = Some(reduced);
-        self.nodes[parent].remain -= 1;
-        if self.ready_to_reduce(parent) {
-            self.reduce(parent);
+    fn reduce(&mut self) {
+        if self.ready_to_reduce(self.current) {
+            println!("reduce {}", self.current);
+            let children = self.nodes[self.current].children.iter().map(|c| self.nodes[*c].reduced.as_ref().unwrap()).collect::<Vec<&T>>();
+            let reducer = self.nodes[self.current].reducer.unwrap();
+            let reduced = reducer(children);
+            let parent = self.nodes[self.current].parent;
+            self.nodes[self.current].reduced = Some(reduced);
+            if self.current != 0 {
+                self.nodes[parent].remain -= 1;
+                self.current = parent;
+                self.reduce();
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod test_reduce_tree {
+    use super::*;
+
+    #[derive(Debug, PartialEq, Clone)]
+    struct NTree {
+        id: String,
+        children: Vec<NTree>,
+    }
+
+    fn reduce(children: Vec<&NTree>) -> NTree {
+        let mut id = children.iter().map(|nt| nt.id.as_str()).collect::<Vec<&str>>().connect(" ");
+        NTree {
+            id: format!("({})", id),
+            children: children.into_iter().map(|nt| nt.clone()).collect::<Vec<NTree>>(),
+        }
+    }
+
+    #[test]
+    fn test() {
+        let mut tree = ReduceTree::new(reduce, 2);
+        tree.add_term(NTree {id: "1".to_owned(), children: Vec::new()});
+        tree.add_term(NTree {id: "2".to_owned(), children: Vec::new()});
+        assert_eq!(tree.nodes[0].reduced.as_ref().unwrap().id, "(1 2)".to_owned());
+        let mut tree = ReduceTree::new(reduce, 2);
+        tree.add_term(NTree {id: "1".to_owned(), children: Vec::new()});
+        tree.add_waiting(reduce, 3);
+        tree.add_term(NTree {id: "2".to_owned(), children: Vec::new()});
+        tree.add_term(NTree {id: "3".to_owned(), children: Vec::new()});
+        tree.add_term(NTree {id: "4".to_owned(), children: Vec::new()});
+        assert_eq!(tree.nodes[0].reduced.as_ref().unwrap().id, "(1 (2 3 4))".to_owned());
+        let mut tree = ReduceTree::new(reduce, 2);
+        tree.add_waiting(reduce, 2);
+        tree.add_term(NTree {id: "1".to_owned(), children: Vec::new()});
+        tree.add_term(NTree {id: "2".to_owned(), children: Vec::new()});
+        tree.add_waiting(reduce, 2);
+        tree.add_term(NTree {id: "3".to_owned(), children: Vec::new()});
+        tree.add_term(NTree {id: "4".to_owned(), children: Vec::new()});
+        assert_eq!(tree.nodes[0].reduced.as_ref().unwrap().id, "((1 2) (3 4))".to_owned());
     }
 }
 
