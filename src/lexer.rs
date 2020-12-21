@@ -1,7 +1,7 @@
 use crate::parser::Token;
 use crate::Error;
 
-const PRINT: &'static str = "print";
+const PRINT: &str = "print";
 
 pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
     let mut tokens = Vec::new();
@@ -31,7 +31,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
                     s.push_str(&src[beg..end]);
                     match &src[end + 1..end + 2] {
                         "\"" | "\\" => s.push_str(&src[end + 1..end + 2]),
-                        "n" => s.push_str("\n"),
+                        "n" => s.push('\n'),
                         _ => return Err(Error::SyntaxError),
                     }
                     end += 2;
@@ -44,7 +44,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
                     end += 1;
                     beg = end;
                     break;
-                } else if src.len() - end <= 0 {
+                } else if (src.len() - end) == 0 {
                     return Err(Error::SyntaxError);
                 } else {
                     end += 1;

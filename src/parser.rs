@@ -16,7 +16,6 @@ struct ReduceTree<T> {
 
 enum ReduceTreeError {
     ChildrenOverflow,
-    AlreadyReduced,
 }
 
 impl<T> ReduceTree<T> {
@@ -27,11 +26,7 @@ impl<T> ReduceTree<T> {
         }
     }
 
-    fn is_finished(&self) -> bool {
-        self.nodes[0].reduced.is_some()
-    }
-
-    fn finish<'a>(&'a self) -> Option<&'a T> {
+    fn finish(&self) -> Option<&T> {
         self.nodes[0].reduced.as_ref()
     }
 
@@ -41,7 +36,7 @@ impl<T> ReduceTree<T> {
         children_size: usize,
     ) -> Result<(), ReduceTreeError> {
         println!("add_waiting {} to {}", self.nodes.len(), self.current);
-        if self.nodes.len() == 0 {
+        if self.nodes.is_empty() {
             self.nodes.push(ReduceNode {
                 reduced: None,
                 parent: 0,
@@ -80,7 +75,7 @@ impl<T> ReduceTree<T> {
 
     fn add_term(&mut self, block: T) -> Result<(), ReduceTreeError> {
         println!("add_term {} to {}", self.nodes.len(), self.current);
-        if self.nodes.len() == 0 {
+        if self.nodes.is_empty() {
             self.nodes.push(ReduceNode {
                 reduced: Some(block),
                 parent: 0,
@@ -138,11 +133,11 @@ mod test_reduce_tree {
     }
 
     fn reduce(children: Vec<&NTree>) -> NTree {
-        let mut id = children
+        let id = children
             .iter()
             .map(|nt| nt.id.as_str())
             .collect::<Vec<&str>>()
-            .connect(" ");
+            .join(" ");
         NTree {
             id: format!("({})", id),
             children: children
@@ -155,7 +150,7 @@ mod test_reduce_tree {
     #[test]
     fn test() {
         let mut tree = ReduceTree::new();
-        tree.add_waiting(reduce, 2);
+        tree.add_waiting(reduce, 2).ok();
         tree.add_term(NTree {
             id: "1".to_owned(),
             children: Vec::new(),
@@ -171,7 +166,7 @@ mod test_reduce_tree {
             "(1 2)".to_owned()
         );
         let mut tree = ReduceTree::new();
-        tree.add_waiting(reduce, 2);
+        tree.add_waiting(reduce, 2).ok();
         tree.add_term(NTree {
             id: "1".to_owned(),
             children: Vec::new(),
@@ -326,7 +321,7 @@ fn stmts(children: Vec<&PolyBlock>) -> PolyBlock {
         let mut ast = ast.clone();
         ast.push(stmt.clone());
         return PolyBlock::Ast(ast);
-    } else if children.len() == 0 {
+    } else if children.is_empty() {
         return PolyBlock::Ast(Vec::new());
     }
     unreachable!();
@@ -335,7 +330,7 @@ fn stmts(children: Vec<&PolyBlock>) -> PolyBlock {
 fn stmts2(children: Vec<&PolyBlock>) -> PolyBlock {
     if let [PolyBlock::Ast(ast)] = children.as_slice() {
         return PolyBlock::Ast(ast.clone());
-    } else if children.len() == 0 {
+    } else if children.is_empty() {
         return PolyBlock::Ast(Vec::new());
     }
     unimplemented!()
@@ -345,7 +340,7 @@ fn stmt(children: Vec<&PolyBlock>) -> PolyBlock {
     if let [PolyBlock::Term(Token::Print), PolyBlock::Term(Token::StrLit(s))] = children.as_slice()
     {
         return PolyBlock::Stmt(Stmt::Print(s.clone()));
-    } else if children.len() == 0 {
+    } else if children.is_empty() {
         return PolyBlock::Ast(Vec::new());
     }
     unimplemented!()
@@ -372,7 +367,7 @@ pub fn ll1(mut tokens: Vec<Token>) -> Result<Ast, Error> {
     stack.push(Elem::Rule(Rule::Stmts));
     let mut tree = ReduceTree::new();
     while !stack.is_empty() {
-        let head = tokens.last().ok_or_else(|| Error::SyntaxError)?;
+        let head = tokens.last().ok_or(Error::SyntaxError)?;
         println!("\nhead ({:?})", head);
         println!("stack {:?}", stack.iter().rev().collect::<Vec<&Elem>>());
         if let Elem::Terminal(token) = stack.last().unwrap() {
@@ -400,9 +395,8 @@ pub fn ll1(mut tokens: Vec<Token>) -> Result<Ast, Error> {
         }
     }
     if let PolyBlock::Ast(ast) = tree.finish().unwrap() {
-        return Ok(ast.clone());
-    }
-    else {
+        Ok(ast.clone())
+    } else {
         unreachable!();
     }
 }

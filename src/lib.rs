@@ -48,6 +48,5 @@ pub fn entry(src_path: &str) -> Result<(), Error> {
     println!("{:?}", ast);
     let flat = ir::compile(ast);
     let mut vm = vm::Vm::compile(flat);
-    vm.execute()
-        .map_err(|exception| Error::RuntimeError(exception))
+    vm.execute().map_err(Error::RuntimeError)
 }
