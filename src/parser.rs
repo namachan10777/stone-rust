@@ -74,6 +74,99 @@ fn gen_rules() -> [Vec<Elem>; 6] {
     ]
 }
 
+#[derive(Debug, PartialEq)]
+pub enum PolyBlock {
+}
+
+type Reducer = fn(Vec<&PolyBlock>) -> PolyBlock;
+
+struct ReduceNode {
+    reduced: Option<PolyBlock>,
+    parent: usize,
+    children_size: usize,
+    reducer: Option<Reducer>,
+    children: Vec<usize>,
+    remain: usize,
+}
+
+struct ReduceTree {
+    nodes: Vec<ReduceNode>,
+}
+
+enum ReduceTreeError {
+    ChildrenOverflow,
+    AlreadyReduced,
+}
+
+impl ReduceTree {
+    fn new(reducer: Reducer, children_size: usize) -> Self {
+        Self {
+            nodes: vec![ReduceNode {
+                reduced: None,
+                parent: 0,
+                children_size,
+                reducer: Some(reducer),
+                children: Vec::new(),
+                remain: children_size,
+            }],
+        }
+    }
+
+    fn add_waiting(&mut self, parent: usize, reducer: Reducer, children_size: usize) -> Result<(), ReduceTreeError> {
+        if self.has_all_child(parent) {
+            return Err(ReduceTreeError::ChildrenOverflow);
+        }
+        self.nodes.push(ReduceNode {
+            reduced: None,
+            parent,
+            reducer: Some(reducer),
+            children_size,
+            children: Vec::new(),
+            remain: children_size
+        });
+        let child_id = self.nodes.len()-1;
+        self.nodes[parent].children.push(child_id);
+        Ok(())
+    }
+
+    fn has_all_child(&self, id: usize) -> bool {
+        self.nodes[id].children.len() == self.nodes[id].children_size
+    }
+
+    fn ready_to_reduce(&self, id: usize) -> bool {
+        self.has_all_child(id) && self.nodes[id].remain == 0
+    }
+
+    fn add_term(&mut self, parent: usize, block: PolyBlock) -> Result<(), ReduceTreeError> {
+        self.nodes.push(ReduceNode {
+            reduced: Some(block),
+            reducer: None,
+            parent: parent,
+            children_size: 0,
+            children: Vec::new(),
+            remain: 0,
+        });
+        self.nodes[parent].remain -= 1;
+        if self.ready_to_reduce(parent) {
+            self.reduce(parent);
+        }
+        Ok(())
+    }
+
+    fn reduce(&mut self, id: usize) {
+        let children = self.nodes[id].children.iter().map(|c| self.nodes[*c].reduced.as_ref().unwrap()).collect::<Vec<&PolyBlock>>();
+        let reducer = self.nodes[id].reducer.unwrap();
+        let reduced = reducer(children);
+        let parent = self.nodes[id].parent;
+        self.nodes[id].reduced = Some(reduced);
+        self.nodes[parent].remain -= 1;
+        if self.ready_to_reduce(parent) {
+            self.reduce(parent);
+        }
+    }
+}
+
+
 // PRINT STRLIT EOL EOF
 const TBL: [[Option<usize>; 4]; 3] = [
     [Some(0), None, Some(1), Some(5)],
