@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::rc::Rc;
 
 /// Caution! non-terminal symbol and terminal symbol have a uniq cardinal independently.
 /// e.g. Term1 -> 0, Term2 -> 1, Term3 -> 2, Rule1 -> 0, Rule2 -> 1...
@@ -51,14 +53,27 @@ pub enum ReduceSymbol<T, Ast> {
     Ast(Ast),
 }
 
-pub type Rule = Vec<Vec<SymbolId>>;
+pub type Words = Vec<Vec<SymbolId>>;
+pub struct Rule<T, Ast> {
+    words: Words,
+    reducer: Rc<Box<dyn FnOnce(&mut Vec<ReduceSymbol<T, Ast>>)>>,
+}
+
+impl<T, Ast> fmt::Debug for Rule<T, Ast> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        f.debug_list().entries(self.words.iter()).finish()
+    }
+}
+
+impl<T, Ast> PartialEq<Rule<T, Ast>> for Rule<T, Ast> {
+    fn eq(&self, other: &Self) -> bool {
+        self.words.eq(&other.words)
+    }
+}
+
 // key is a cardinal of non-terminal symbol
-pub type Rules<F> = HashMap<SymbolId, (Rule, F)>;
-
-type IRule = Vec<SymbolId>;
-type IRules<F> = Vec<(IRule, F)>;
-
-type Table = Vec<Vec<Option<usize>>>;
+pub type Rules<T, Ast> = HashMap<SymbolId, Rule<T, Ast>>;
+pub type IRules<T, Ast> = Vec<Rule<T, Ast>>;
 
 fn gen_fluxed_and_lasts_rule(
     rules: &[Vec<SymbolId>],
@@ -85,11 +100,8 @@ fn gen_fluxed_and_lasts_rule(
 
 // internal impl
 // 先頭が共通していれば共通部分単体のルールに書き換え、共通以後を新ルールにして追加、新ルールにも適用
-fn remove_common_impl<F: std::fmt::Debug + Clone>(
-    rules: &mut Vec<(Vec<Vec<SymbolId>>, F)>,
-    target_idx: usize,
-) {
-    rules[target_idx].0.sort_by(|rule1, rule2| {
+fn remove_common_impl<T, Ast>(rules: &mut IRules<T, Ast>, target_idx: usize) {
+    rules[target_idx].words.sort_by(|rule1, rule2| {
         if rule1.is_empty() {
             Ordering::Less
         } else if rule2.is_empty() {
@@ -100,44 +112,52 @@ fn remove_common_impl<F: std::fmt::Debug + Clone>(
     });
     let mut begin = 0;
     let mut common_removed_rule = Vec::new();
-    for i in 0..rules[target_idx].0.len() {
-        if rules[target_idx].0[begin].get(0) != rules[target_idx].0[i].get(0) {
+    for i in 0..rules[target_idx].words.len() {
+        if rules[target_idx].words[begin].get(0) != rules[target_idx].words[i].get(0) {
             if i - begin > 1 {
                 let (mut replaced, new_rule) =
-                    gen_fluxed_and_lasts_rule(&rules[target_idx].0[begin..i]);
+                    gen_fluxed_and_lasts_rule(&rules[target_idx].words[begin..i]);
                 if let Some(new_rule) = new_rule {
                     replaced.push(SymbolId::NTerm(rules.len()));
-                    rules.push((new_rule, rules[target_idx].1.clone()));
+                    rules.push(Rule {
+                        words: new_rule,
+                        reducer: Rc::new(Box::new(|_: &mut Vec<ReduceSymbol<T, Ast>>| {})),
+                    });
                     remove_common_impl(rules, rules.len() - 1);
                 }
                 common_removed_rule.push(replaced);
             } else {
-                common_removed_rule.push(rules[target_idx].0[begin].clone());
+                common_removed_rule.push(rules[target_idx].words[begin].clone());
             }
             begin = i;
         }
     }
-    if rules[target_idx].0.len() - begin > 1 {
-        let (mut replaced, new_rule) =
-            gen_fluxed_and_lasts_rule(&rules[target_idx].0[begin..rules[target_idx].0.len()]);
+    if rules[target_idx].words.len() - begin > 1 {
+        let (mut replaced, new_rule) = gen_fluxed_and_lasts_rule(
+            &rules[target_idx].words[begin..rules[target_idx].words.len()],
+        );
         if let Some(new_rule) = new_rule {
             replaced.push(SymbolId::NTerm(rules.len()));
-            rules.push((new_rule, rules[target_idx].1.clone()));
+            rules.push(Rule {
+                words: new_rule,
+                reducer: rules[target_idx].reducer.clone(),
+            });
             remove_common_impl(rules, rules.len() - 1);
         }
         common_removed_rule.push(replaced);
     } else {
-        common_removed_rule.push(rules[target_idx].0[begin].clone());
+        common_removed_rule.push(rules[target_idx].words[begin].clone());
     }
-    rules[target_idx] = (common_removed_rule, rules[target_idx].1.clone());
+    rules[target_idx] = Rule {
+        words: common_removed_rule,
+        reducer: rules[target_idx].reducer.clone(),
+    };
 }
 
 // 共通部分削除
 // A B C D | A B C E | A B F
 // -> A B -> (C (D | E) | F)
-fn remove_common<F: std::fmt::Debug + Clone>(
-    rules: Rules<F>,
-) -> Result<Vec<(Vec<Vec<SymbolId>>, F)>, Error>
+fn remove_common<T, Ast>(rules: Rules<T, Ast>) -> Result<IRules<T, Ast>, Error>
 where
     //F: FnMut(&mut Vec<ReduceSymbol<T, Ast>>),
 {
@@ -150,12 +170,12 @@ where
                 Err(Error::RuleMustBeNonTerminal)
             }
         })
-        .collect::<Result<Vec<(usize, (Vec<Vec<SymbolId>>, F))>, Error>>()?;
+        .collect::<Result<Vec<(usize, Rule<T, Ast>)>, Error>>()?;
     pairs.sort_by(|a, b| a.0.cmp(&b.0));
     let mut tbl = pairs
         .into_iter()
         .map(|(_, rule)| rule)
-        .collect::<Vec<(Vec<Vec<SymbolId>>, F)>>();
+        .collect::<Vec<Rule<T, Ast>>>();
     for i in 0..tbl.len() {
         remove_common_impl(&mut tbl, i);
     }
@@ -280,86 +300,96 @@ mod test {
     #[test]
     fn test_remove_common() {
         let mut rules = HashMap::new();
+        let reducer = |_: &mut Vec<ReduceSymbol<usize, usize>>| {};
         rules.insert(
             NTerm::Expr.id(),
-            (
-                vec![
+            Rule::<usize, usize> {
+                words: vec![
                     vec![NTerm::Term.id()],
                     vec![NTerm::Term.id(), Term::Add.id(), NTerm::Expr.id()],
                 ],
-                "expr2",
-            ),
+                reducer: Rc::new(Box::new(reducer.clone())),
+            },
         );
         rules.insert(
             NTerm::Term.id(),
-            (
-                vec![
+            Rule {
+                words: vec![
                     vec![NTerm::Factor.id()],
                     vec![NTerm::Factor.id(), Term::Mul.id(), NTerm::Term.id()],
                 ],
-                "term",
-            ),
+                reducer: Rc::new(Box::new(reducer.clone())),
+            },
         );
         rules.insert(
             NTerm::Factor.id(),
-            (
-                vec![
+            Rule {
+                words: vec![
                     vec![Term::Num(0).id()],
                     vec![Term::LP.id(), NTerm::Expr.id(), Term::RP.id()],
                 ],
-                "factor",
-            ),
+                reducer: Rc::new(Box::new(reducer.clone())),
+            },
         );
         let removed = vec![
-            (vec![vec![NTerm::Term.id(), SymbolId::NTerm(3)]], "expr2"),
-            (vec![vec![NTerm::Factor.id(), SymbolId::NTerm(4)]], "term"),
-            (
-                vec![
+            (Rule {
+                words: vec![vec![NTerm::Term.id(), SymbolId::NTerm(3)]],
+                reducer: Rc::new(Box::new(reducer.clone())),
+            }),
+            (Rule {
+                words: vec![vec![NTerm::Factor.id(), SymbolId::NTerm(4)]],
+                reducer: Rc::new(Box::new(reducer.clone())),
+            }),
+            (Rule {
+                words: vec![
                     vec![Term::Num(0).id()],
                     vec![Term::LP.id(), NTerm::Expr.id(), Term::RP.id()],
                 ],
-                "factor",
-            ),
-            (
-                vec![vec![], vec![Term::Add.id(), NTerm::Expr.id()]],
-                "expr2",
-            ),
-            (vec![vec![], vec![Term::Mul.id(), NTerm::Term.id()]], "term"),
+                reducer: Rc::new(Box::new(reducer.clone())),
+            }),
+            (Rule {
+                words: vec![vec![], vec![Term::Add.id(), NTerm::Expr.id()]],
+                reducer: Rc::new(Box::new(reducer.clone())),
+            }),
+            (Rule {
+                words: vec![vec![], vec![Term::Mul.id(), NTerm::Term.id()]],
+                reducer: Rc::new(Box::new(reducer.clone())),
+            }),
         ];
         assert_eq!(Ok(removed), remove_common(rules));
         let mut rules = HashMap::new();
         rules.insert(
             SymbolId::NTerm(0),
-            (
-                vec![
+            Rule {
+                words: vec![
                     vec![SymbolId::Term(1), SymbolId::Term(2), SymbolId::Term(3)],
                     vec![SymbolId::Term(1), SymbolId::Term(4), SymbolId::Term(3)],
                     vec![SymbolId::Term(1), SymbolId::Term(4), SymbolId::Term(5)],
                     vec![SymbolId::Term(1), SymbolId::Term(4), SymbolId::Term(5)],
                     vec![SymbolId::Term(0), SymbolId::Term(2), SymbolId::Term(3)],
                 ],
-                "hoge",
-            ),
+                reducer: Rc::new(Box::new(reducer.clone())),
+            },
         );
         let removed = vec![
-            (
-                vec![
+            Rule {
+                words: vec![
                     vec![SymbolId::Term(0), SymbolId::Term(2), SymbolId::Term(3)],
                     vec![SymbolId::Term(1), SymbolId::NTerm(1)],
                 ],
-                "hoge",
-            ),
-            (
-                vec![
+                reducer: Rc::new(Box::new(reducer.clone())),
+            },
+            Rule {
+                words: vec![
                     vec![SymbolId::Term(2), SymbolId::Term(3)],
                     vec![SymbolId::Term(4), SymbolId::NTerm(2)],
                 ],
-                "hoge",
-            ),
-            (
-                vec![vec![SymbolId::Term(3)], vec![SymbolId::Term(5)]],
-                "hoge",
-            ),
+                reducer: Rc::new(Box::new(reducer.clone())),
+            },
+            Rule {
+                words: vec![vec![SymbolId::Term(3)], vec![SymbolId::Term(5)]],
+                reducer: Rc::new(Box::new(reducer.clone())),
+            },
         ];
         assert_eq!(Ok(removed), remove_common(rules));
     }
@@ -368,7 +398,7 @@ mod test {
 pub fn ll1<T: Terminal, NT: NonTerminal, Ast, F>(
     top: NT,
     eof: T,
-    rules: Rule,
+    rules: Rule<T, Ast>,
     input: Vec<T>,
 ) -> Result<Ast, Error>
 where

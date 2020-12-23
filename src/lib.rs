@@ -2,6 +2,7 @@ use std::fs;
 
 mod ir;
 mod lexer;
+mod ll1;
 mod parser;
 mod vm;
 
