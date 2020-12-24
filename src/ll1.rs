@@ -411,7 +411,7 @@ mod test {
     }
 
     #[test]
-    fn test_firsts() {
+    fn test_all_firsts() {
         let reducer = |_: &mut Vec<ReduceSymbol<usize, usize>>| {};
         let removed = vec![
             Rule {
@@ -445,6 +445,10 @@ mod test {
                         set: set! {1},
                         has_eps: true,
                     },
+                    SymbolSet {
+                        set: set! {},
+                        has_eps: true,
+                    },
                 ],
                 vec![
                     SymbolSet {
@@ -455,28 +459,171 @@ mod test {
                         set: set! {0},
                         has_eps: true,
                     },
+                    SymbolSet {
+                        set: set! {},
+                        has_eps: true,
+                    },
                 ],
             ],
             vec![
+                vec![
+                    SymbolSet {
+                        set: set! {0},
+                        has_eps: false,
+                    },
+                    SymbolSet {
+                        set: set! {},
+                        has_eps: true,
+                    },
+                ],
                 vec![SymbolSet {
-                    set: set! {0},
-                    has_eps: false,
+                    set: set! {},
+                    has_eps: true,
                 }],
-                vec![],
             ],
             vec![
+                vec![
+                    SymbolSet {
+                        set: set! {1},
+                        has_eps: false,
+                    },
+                    SymbolSet {
+                        set: set! {},
+                        has_eps: true,
+                    },
+                ],
                 vec![SymbolSet {
-                    set: set! {1},
-                    has_eps: false,
+                    set: set! {},
+                    has_eps: true,
                 }],
-                vec![],
             ],
-            vec![vec![SymbolSet {
-                set: set! {2},
-                has_eps: false,
-            }]],
+            vec![vec![
+                SymbolSet {
+                    set: set! {2},
+                    has_eps: false,
+                },
+                SymbolSet {
+                    set: set! {},
+                    has_eps: true,
+                },
+            ]],
         ];
-        assert_eq!(firsts(&removed), expected);
+        assert_eq!(all_firsts(&removed), expected);
+    }
+
+    #[test]
+    fn test_first() {
+        let reducer = |_: &mut Vec<ReduceSymbol<usize, usize>>| {};
+        let rules = map! {
+            NTerm::Expr.id()=>
+                Rule::<usize, usize> {
+                    words: vec![
+                        vec![NTerm::Term.id()],
+                        vec![NTerm::Term.id(), Term::Add.id(), NTerm::Expr.id()],
+                    ],
+                    reducer: Box::new(reducer.clone()),
+                },
+            NTerm::Term.id()=>
+                Rule {
+                    words: vec![
+                        vec![NTerm::Factor.id()],
+                        vec![NTerm::Factor.id(), Term::Mul.id(), NTerm::Term.id()],
+                    ],
+                    reducer: Box::new(reducer.clone()),
+                },
+            NTerm::Factor.id()=>
+                Rule {
+                    words: vec![
+                        vec![Term::Num(0).id()],
+                        vec![Term::LP.id(), NTerm::Expr.id(), Term::RP.id()],
+                    ],
+                    reducer: Box::new(reducer.clone()),
+                }
+        };
+        let removed = remove_common(rules).unwrap();
+        let firsts = firsts(removed);
+        let expected = vec![
+            vec![SymbolSet {
+                has_eps: false,
+                set: set! {Term::Num(0).cardinal(), Term::LP.cardinal()},
+            }],
+            vec![SymbolSet {
+                has_eps: false,
+                set: set! {Term::Num(0).cardinal(), Term::LP.cardinal()},
+            }],
+            vec![
+                SymbolSet {
+                    has_eps: false,
+                    set: set! {Term::Num(0).cardinal()},
+                },
+                SymbolSet {
+                    has_eps: false,
+                    set: set! {Term::LP.cardinal()},
+                },
+            ],
+            vec![
+                SymbolSet {
+                    has_eps: true,
+                    set: HashSet::new(),
+                },
+                SymbolSet {
+                    has_eps: false,
+                    set: set! {Term::Add.cardinal()},
+                },
+            ],
+            vec![
+                SymbolSet {
+                    has_eps: true,
+                    set: HashSet::new(),
+                },
+                SymbolSet {
+                    has_eps: false,
+                    set: set! {Term::Mul.cardinal()},
+                },
+            ],
+        ];
+        assert_eq!(firsts, expected);
+    }
+
+    #[test]
+    fn test_follows() {
+        let reducer = |_: &mut Vec<ReduceSymbol<usize, usize>>| {};
+        let rules = map! {
+            NTerm::Expr.id()=>
+                Rule::<usize, usize> {
+                    words: vec![
+                        vec![NTerm::Term.id()],
+                        vec![NTerm::Term.id(), Term::Add.id(), NTerm::Expr.id()],
+                    ],
+                    reducer: Box::new(reducer.clone()),
+                },
+            NTerm::Term.id()=>
+                Rule {
+                    words: vec![
+                        vec![NTerm::Factor.id()],
+                        vec![NTerm::Factor.id(), Term::Mul.id(), NTerm::Term.id()],
+                    ],
+                    reducer: Box::new(reducer.clone()),
+                },
+            NTerm::Factor.id()=>
+                Rule {
+                    words: vec![
+                        vec![Term::Num(0).id()],
+                        vec![Term::LP.id(), NTerm::Expr.id(), Term::RP.id()],
+                    ],
+                    reducer: Box::new(reducer.clone()),
+                }
+        };
+        let removed = remove_common(rules).unwrap();
+        let follows = follows(removed);
+        let expected = vec![
+            set! {Term::RP.cardinal()},
+            set! {Term::Add.cardinal(), Term::RP.cardinal()},
+            set! {Term::Add.cardinal(), Term::Mul.cardinal(), Term::RP.cardinal()},
+            set! {Term::RP.cardinal()},
+            set! {Term::RP.cardinal(), Term::Add.cardinal()},
+        ];
+        assert_eq!(follows, expected);
     }
 }
 
@@ -494,11 +641,12 @@ impl Default for SymbolSet {
     }
 }
 
-type FirstSet = Vec<Vec<Vec<SymbolSet>>>;
-type FollowSet = Vec<SymbolSet>;
+type AllFirstSet = Vec<Vec<Vec<SymbolSet>>>;
+type FirstSet = Vec<Vec<SymbolSet>>;
+type FollowSet = Vec<HashSet<usize>>;
 
-fn firsts<T, Ast>(rules: &IRules<T, Ast>) -> FirstSet {
-    let mut fiw: FirstSet = Vec::new();
+fn all_firsts<T, Ast>(rules: &IRules<T, Ast>) -> AllFirstSet {
+    let mut fiw = Vec::new();
     let mut fia = Vec::new();
     // initialize
     for rule in rules {
@@ -509,6 +657,10 @@ fn firsts<T, Ast>(rules: &IRules<T, Ast>) -> FirstSet {
             for _ in 0..word.len() {
                 set_for_slice.push(SymbolSet::default());
             }
+            set_for_slice.push(SymbolSet {
+                has_eps: true,
+                set: HashSet::new(),
+            });
             set_for_words.push(set_for_slice);
         }
         fiw.push(set_for_words);
@@ -568,16 +720,45 @@ fn firsts<T, Ast>(rules: &IRules<T, Ast>) -> FirstSet {
     fiw
 }
 
+fn firsts<T, Ast>(rules: IRules<T, Ast>) -> FirstSet {
+    all_firsts(&rules)
+        .iter()
+        .map(|per_rule| {
+            per_rule
+                .iter()
+                .map(|per_word| per_word[0].clone())
+                .collect::<Vec<SymbolSet>>()
+        })
+        .collect::<Vec<Vec<SymbolSet>>>()
+}
+
 /// (id of non-terminal symbol, id of rule in the non-terminal symbol) -> id of terminal symbol
 fn follows<T, Ast>(rules: IRules<T, Ast>) -> FollowSet {
     let mut fo = FollowSet::new();
     let mut changed = true;
     fo.resize_with(rules.len(), || Default::default());
+    let firsts = all_firsts(&rules);
     while changed {
         let fo_old = fo.clone();
         for (a_idx, rule) in rules.iter().enumerate() {
-            for (w_idx, word) in rule.words.iter().enumerate() {}
+            for (w_idx, word) in rule.words.iter().enumerate() {
+                for (s_idx, id) in word.iter().enumerate() {
+                    if let SymbolId::NTerm(id) = id {
+                        fo[*id] = fo[*id]
+                            .union(&firsts[a_idx][w_idx][s_idx + 1].set)
+                            .cloned()
+                            .collect::<HashSet<usize>>();
+                        if firsts[a_idx][w_idx][s_idx + 1].has_eps {
+                            fo[*id] = fo[*id]
+                                .union(&fo[a_idx])
+                                .cloned()
+                                .collect::<HashSet<usize>>();
+                        }
+                    }
+                }
+            }
         }
+        changed = fo_old != fo;
     }
     fo
 }
