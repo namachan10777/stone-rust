@@ -45,8 +45,9 @@ impl PartialOrd<Self> for SymbolId {
 #[derive(Debug, PartialEq)]
 pub enum Error {
     SyntaxError,
-    RuleMustBeNonTerminal,
+    MayBeLeftCyclic,
     ThisIsNotLL1,
+    RuleMustBeNonTerminal,
 }
 
 pub enum ReduceSymbol<T, Ast> {
@@ -510,7 +511,7 @@ mod test {
                 },
             ]],
         ];
-        assert_eq!(all_firsts(&removed), expected);
+        assert_eq!(all_firsts(&removed).unwrap(), expected);
     }
 
     #[test]
@@ -543,7 +544,7 @@ mod test {
                 }
         };
         let removed = remove_common(rules).unwrap();
-        let firsts = firsts(&removed);
+        let firsts = firsts(&removed).unwrap();
         let expected = vec![
             vec![SymbolSet {
                 has_eps: false,
@@ -617,7 +618,7 @@ mod test {
                 }
         };
         let removed = remove_common(rules).unwrap();
-        let follows = follows(&removed);
+        let follows = follows(&removed).unwrap();
         let expected = vec![
             set! {Term::RP.cardinal()},
             set! {Term::Add.cardinal(), Term::RP.cardinal()},
@@ -735,7 +736,7 @@ type AllFirstSet = Vec<Vec<Vec<SymbolSet>>>;
 type FirstSet = Vec<Vec<SymbolSet>>;
 type FollowSet = Vec<HashSet<usize>>;
 
-fn all_firsts<T, Ast>(rules: &IRules<T, Ast>) -> AllFirstSet {
+fn all_firsts<T, Ast>(rules: &IRules<T, Ast>) -> Result<AllFirstSet, Error> {
     let mut fiw = Vec::new();
     let mut fia = Vec::new();
     // initialize
@@ -757,7 +758,12 @@ fn all_firsts<T, Ast>(rules: &IRules<T, Ast>) -> AllFirstSet {
     }
     // calcurate set
     let mut changed = true;
+    let mut count = 0;
     while changed {
+        count += 1;
+        if count > 10000 {
+            return Err(Error::MayBeLeftCyclic);
+        }
         changed = false;
         let fia_old = fia.clone();
         let fiw_old = fiw.clone();
@@ -807,28 +813,34 @@ fn all_firsts<T, Ast>(rules: &IRules<T, Ast>) -> AllFirstSet {
         changed |= fia_old != fia;
         changed |= fiw_old != fiw;
     }
-    fiw
+    Ok(fiw)
 }
 
-fn firsts<T, Ast>(rules: &IRules<T, Ast>) -> FirstSet {
-    all_firsts(&rules)
-        .iter()
-        .map(|per_rule| {
-            per_rule
-                .iter()
-                .map(|per_word| per_word[0].clone())
-                .collect::<Vec<SymbolSet>>()
-        })
-        .collect::<Vec<Vec<SymbolSet>>>()
+fn firsts<T, Ast>(rules: &IRules<T, Ast>) -> Result<FirstSet, Error> {
+    all_firsts(&rules).map(|firsts| {
+        firsts
+            .iter()
+            .map(|per_rule| {
+                per_rule
+                    .iter()
+                    .map(|per_word| per_word[0].clone())
+                    .collect::<Vec<SymbolSet>>()
+            })
+            .collect::<Vec<Vec<SymbolSet>>>()
+    })
 }
 
 /// (id of non-terminal symbol, id of rule in the non-terminal symbol) -> id of terminal symbol
-fn follows<T, Ast>(rules: &IRules<T, Ast>) -> FollowSet {
+fn follows<T, Ast>(rules: &IRules<T, Ast>) -> Result<FollowSet, Error> {
     let mut fo = FollowSet::new();
     let mut changed = true;
     fo.resize_with(rules.len(), || Default::default());
-    let firsts = all_firsts(&rules);
+    let firsts = all_firsts(&rules)?;
+    let mut count = 0;
     while changed {
+        if count > 10000 {
+            return Err(Error::MayBeLeftCyclic);
+        }
         let fo_old = fo.clone();
         for (a_idx, rule) in rules.iter().enumerate() {
             for (w_idx, word) in rule.words.iter().enumerate() {
@@ -850,7 +862,7 @@ fn follows<T, Ast>(rules: &IRules<T, Ast>) -> FollowSet {
         }
         changed = fo_old != fo;
     }
-    fo
+    Ok(fo)
 }
 
 type Table<T, Ast> = Vec<Vec<Option<RewriteRule<T, Ast>>>>;
@@ -886,8 +898,8 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
     tbl.resize_with(rules.len(), || Vec::new());
     tbl.iter_mut()
         .for_each(|mut v| v.resize_with(T::N, || None));
-    let firsts = firsts(&rules);
-    let follows = follows(&rules);
+    let firsts = firsts(&rules)?;
+    let follows = follows(&rules)?;
     for nt_idx in 0..rules.len() {
         for t_idx in 0..T::N {
             for (w_idx, first_of_word) in firsts[nt_idx].iter().enumerate() {
@@ -909,14 +921,66 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
     Ok(tbl)
 }
 
-pub fn ll1<T: Terminal, NT: NonTerminal, Ast, F>(
+pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone, F>(
     top: NT,
     eof: T,
-    rules: Rule<T, Ast>,
+    rules: Rules<T, Ast>,
     input: Vec<T>,
 ) -> Result<Ast, Error>
 where
     F: FnMut(&mut Vec<ReduceSymbol<T, Ast>>),
 {
-    Err(Error::SyntaxError)
+    let removed = remove_common(rules)?;
+    let tbl = gen_table(removed)?;
+    let mut input_id = input.iter().map(|tok| tok.cardinal()).collect::<Vec<usize>>();
+    let mut ast_stack = input
+        .into_iter()
+        .filter_map(|tok| {
+            if tok.accept() {
+                Some(ReduceSymbol::Term(tok))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<ReduceSymbol<T, Ast>>>();
+    let mut reducer_stack: Vec<Reducer<T, Ast>> = Vec::new();
+    let mut child_count: Vec<usize> = Vec::new();
+    let mut state = Vec::new();
+    state.push(eof.id());
+    while !state.is_empty() {
+        let top_state = state.pop().unwrap();
+        if let SymbolId::Term(id) = top_state {
+            if input_id.pop() != Some(id) {
+                return Err(Error::SyntaxError);
+            }
+            while child_count.last() == Some(&1) {
+                let reducer = reducer_stack.pop().unwrap();
+                reducer(&mut ast_stack);
+                child_count.pop();
+            }
+            if !child_count.is_empty() {
+                let last_idx = child_count.len() - 1;
+                child_count[last_idx] -= 1;
+            }
+        } else if let SymbolId::NTerm(id) = top_state {
+            if let Some(rewrite) = &tbl[id][*input_id.last().ok_or(Error::SyntaxError)?] {
+                child_count.push(rewrite.word.len());
+                reducer_stack.push(rewrite.reducer.clone());
+                for id in rewrite.word.iter().rev() {
+                    state.push(id.clone());
+                }
+            }
+            else {
+                return Err(Error::SyntaxError);
+            }
+        }
+    }
+    if child_count.is_empty() && input_id.is_empty() {
+        if ast_stack.len() == 1 {
+            if let ReduceSymbol::Ast(ast) = &ast_stack[0] {
+                return Ok(ast.clone());
+            }
+        }
+    }
+    return Err(Error::SyntaxError);
 }
