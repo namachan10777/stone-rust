@@ -84,13 +84,17 @@ impl<T, Ast> PartialEq<Rule<T, Ast>> for Rule<T, Ast> {
 
 enum IReducer<T, Ast> {
     Tag(usize),
-    Root(HashMap<Vec<usize>, Reducer<T, Ast>>),
+    Nop,
+    Direct(Reducer<T, Ast>),
+    Root(Vec<Reducer<T, Ast>>),
 }
 
 impl<T, Ast> Clone for IReducer<T, Ast> {
     fn clone(&self) -> Self {
         match self {
             IReducer::Tag(id) => IReducer::Tag(*id),
+            IReducer::Nop => IReducer::Nop,
+            IReducer::Direct(f) => IReducer::Direct(f.clone()),
             IReducer::Root(map) => IReducer::Root(map.clone()),
         }
     }
@@ -100,7 +104,9 @@ impl<T, Ast> fmt::Debug for IReducer<T, Ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             IReducer::Tag(id) => f.write_fmt(format_args!("Tag({})", *id)),
-            IReducer::Root(map) => f.debug_list().entries(map.keys()).finish(),
+            IReducer::Nop => f.write_str("Nop"),
+            IReducer::Direct(_) => f.write_str("Direct"),
+            IReducer::Root(fns) => f.write_fmt(format_args!("Fn * {}", fns.len())),
         }
     }
 }
@@ -109,7 +115,9 @@ impl<T, Ast> PartialEq for IReducer<T, Ast> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (IReducer::Tag(lid), IReducer::Tag(rid)) => lid == rid,
-            (IReducer::Root(lmap), IReducer::Root(rmap)) => lmap.keys().eq(rmap.keys()),
+            (IReducer::Nop, IReducer::Nop) => true,
+            (IReducer::Direct(_), IReducer::Direct(_)) => true,
+            (IReducer::Root(lmap), IReducer::Root(rmap)) => lmap.len() == rmap.len(),
             _ => false,
         }
     }
@@ -119,13 +127,16 @@ struct IRule<T, Ast> {
     words: Vec<SymbolId>,
     reducer: IReducer<T, Ast>,
 }
-impl<T,Ast> fmt::Debug for IRule<T,Ast> {
+impl<T, Ast> fmt::Debug for IRule<T, Ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        f.debug_struct("IRule").field("words", &self.words).field("reducer", &self.reducer).finish()
+        f.debug_struct("IRule")
+            .field("words", &self.words)
+            .field("reducer", &self.reducer)
+            .finish()
     }
 }
 
-impl<T,Ast> Clone for IRule<T,Ast> {
+impl<T, Ast> Clone for IRule<T, Ast> {
     fn clone(&self) -> Self {
         Self {
             words: self.words.clone(),
@@ -134,7 +145,7 @@ impl<T,Ast> Clone for IRule<T,Ast> {
     }
 }
 
-impl<T,Ast> PartialEq for IRule<T,Ast> {
+impl<T, Ast> PartialEq for IRule<T, Ast> {
     fn eq(&self, other: &Self) -> bool {
         self.words.eq(&other.words) && self.reducer.eq(&other.reducer)
     }
@@ -144,7 +155,7 @@ impl<T,Ast> PartialEq for IRule<T,Ast> {
 pub type Rules<T, Ast> = HashMap<usize, Vec<Rule<T, Ast>>>;
 pub type IRules<T, Ast> = Vec<Vec<IRule<T, Ast>>>;
 
-fn gen_fluxed_and_lasts_rule<T, Ast>(
+/*fn gen_fluxed_and_lasts_rule<T, Ast>(
     rules: &[Rule<T, Ast>],
 ) -> (IRule<T, Ast>, Option<Vec<IRule<T, Ast>>>) {
     // FIXME
@@ -242,6 +253,149 @@ where
         remove_common_impl(&mut tbl, i);
     }
     Ok(tbl)
+}*/
+
+fn cmp_symbolid_option(a: Option<&SymbolId>, b: Option<&SymbolId>) -> Ordering {
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, _) => Ordering::Less,
+        (_, None) => Ordering::Greater,
+        (Some(SymbolId::NTerm(a)), Some(SymbolId::NTerm(b))) => a.cmp(&b),
+        (Some(SymbolId::Term(a)), Some(SymbolId::Term(b))) => a.cmp(&b),
+        (Some(SymbolId::NTerm(_)), Some(SymbolId::Term(_))) => Ordering::Less,
+        (Some(SymbolId::Term(_)), Some(SymbolId::NTerm(_))) => Ordering::Greater,
+    }
+}
+
+fn cmp_rule<T, Ast>(a: &Rule<T, Ast>, b: &Rule<T, Ast>) -> Ordering {
+    cmp_symbolid_option(a.words.get(0), b.words.get(0))
+}
+
+fn n_sames(rules: &[(usize, Vec<SymbolId>)]) -> usize {
+    let mut cnt = 0;
+    if rules.len() == 0 {
+        return 0;
+    }
+    'outer: loop {
+        for i in 0..rules.len() {
+            if cnt >= rules[i].1.len() {
+                break 'outer;
+            }
+            if rules[0].1[cnt] != rules[i].1[cnt] {
+                break 'outer;
+            }
+        }
+        cnt += 1;
+    }
+    return cnt;
+}
+
+fn split_rules<T, Ast>(
+    rule: &Vec<(usize, Vec<SymbolId>)>,
+    nterm_offset: usize,
+) -> Result<(Vec<IRule<T, Ast>>, Vec<Vec<IRule<T, Ast>>>), Error> {
+    println!("split rules {:?} {}", rule, nterm_offset);
+    let mut rule = rule.to_vec();
+    rule.sort_by(|a, b| cmp_symbolid_option(a.1.get(0), b.1.get(0)));
+    let mut new_rule = Vec::new();
+    let mut added_nterm = Vec::new();
+    let mut begin = 0;
+    for i in 0..rule.len() + 1 {
+        if i == rule.len() || rule[begin].1.get(0) != rule[i].1.get(0) {
+            if i - begin > 1 {
+                if rule[begin].1.is_empty() {
+                    println!("allempty");
+                    new_rule.push(IRule {
+                        words: Vec::new(),
+                        reducer: IReducer::Tag(rule[begin].0),
+                    });
+                } else {
+                    let n_sames = n_sames(&rule[begin..i]);
+                    // 残りが全て同じ場合
+                    if rule.iter().map(|r| r.1.len()).fold(0, |a, b| a.max(b)) == n_sames {
+                        new_rule.push(IRule {
+                            words: rule[begin].1.clone(),
+                            reducer: IReducer::Tag(rule[begin].0),
+                        });
+                    } else {
+                        println!("split recurse {} ", n_sames);
+                        let mut new_words = rule[begin].1[0..n_sames].to_vec();
+                        new_words.push(SymbolId::NTerm(nterm_offset));
+                        new_rule.push(IRule {
+                            words: new_words,
+                            reducer: IReducer::Nop,
+                        });
+                        let (generated_nterm, mut generated_nterms) = split_rules::<T, Ast>(
+                            &rule[begin..i]
+                                .iter()
+                                .map(|(tag, rule)| (*tag, rule[n_sames..rule.len()].to_vec()))
+                                .collect::<Vec<(usize, Vec<SymbolId>)>>(),
+                            nterm_offset + 1 + added_nterm.len(),
+                        )?;
+                        added_nterm.push(generated_nterm);
+                        added_nterm.append(&mut generated_nterms);
+                    }
+                }
+            } else {
+                println!("cannot split");
+                new_rule.push(IRule {
+                    words: rule[begin].1.clone(),
+                    reducer: IReducer::Tag(rule[begin].0),
+                });
+            }
+            begin = i;
+        }
+    }
+    Ok((new_rule, added_nterm))
+}
+
+fn remove_common<T, Ast>(rule: Rules<T, Ast>) -> Result<IRules<T, Ast>, Error> {
+    let mut rule_sorted = rule
+        .into_iter()
+        .map(|(nid, rules)| {
+            (
+                nid,
+                rules
+                    .into_iter()
+                    .enumerate()
+                    .collect::<Vec<(usize, Rule<T, Ast>)>>(),
+            )
+        })
+        .collect::<Vec<(usize, Vec<(usize, Rule<T, Ast>)>)>>();
+    rule_sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut new_rules = Vec::new();
+    let mut n_rules = rule_sorted.len();
+    new_rules.resize_with(n_rules, || Vec::new());
+    for (nidx, mut nterm) in rule_sorted {
+        let reducers: Vec<Reducer<T, Ast>> = nterm
+            .iter()
+            .map(|rule| rule.1.reducer.clone())
+            .collect::<Vec<Reducer<T, Ast>>>();
+        nterm.sort_by(|a, b| cmp_rule(&a.1, &b.1));
+        let (replaced, mut added) = split_rules::<T, Ast>(
+            &nterm
+                .into_iter()
+                .map(|(idx, rule)| (idx, rule.words))
+                .collect::<Vec<(usize, Vec<SymbolId>)>>(),
+            n_rules,
+        )?;
+        let replaced = replaced
+            .into_iter()
+            .map(|rule| IRule {
+                words: rule.words,
+                reducer: match rule.reducer {
+                    IReducer::Tag(idx) => IReducer::Direct(reducers[idx].clone()),
+                    IReducer::Nop => IReducer::Root(reducers.clone()),
+                    IReducer::Direct(_) => unreachable!(),
+                    IReducer::Root(_) => unreachable!(),
+                },
+            })
+            .collect::<Vec<IRule<T, Ast>>>();
+        new_rules[nidx] = replaced;
+        new_rules.append(&mut added);
+        n_rules = new_rules.len();
+    }
+    Ok(new_rules)
 }
 
 #[cfg(test)]
@@ -320,6 +474,7 @@ mod test {
         }
     }
 
+    /*
     #[test]
     fn test_gen_fluxed_and_lasts_rule() {
         let dummy: Reducer<(), ()> = Rc::new(Box::new(|_: &mut Vec<ReduceSymbol<(), ()>>| {}));
@@ -418,7 +573,7 @@ mod test {
             }
         );
         assert_eq!(tails, None);
-    }
+    }*/
 
     #[test]
     fn test_remove_common() {
@@ -439,42 +594,42 @@ mod test {
             ]
         };
         let removed = vec![
-            vec![Rule {
+            vec![IRule {
                 words: vec![NTerm::Term.id(), SymbolId::NTerm(3)],
-                reducer: reducer.clone(),
+                reducer: IReducer::Root(vec![reducer.clone(), reducer.clone()]),
             }],
-            vec![Rule {
+            vec![IRule {
                 words: vec![NTerm::Factor.id(), SymbolId::NTerm(4)],
-                reducer: reducer.clone(),
+                reducer: IReducer::Root(vec![reducer.clone(), reducer.clone()]),
             }],
             vec![
-                Rule {
+                IRule {
                     words: vec![Term::Num(0).id()],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Direct(reducer.clone()),
                 },
-                Rule {
+                IRule {
                     words: vec![Term::LP.id(), NTerm::Expr.id(), Term::RP.id()],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Direct(reducer.clone()),
                 },
             ],
             vec![
-                Rule {
+                IRule {
                     words: vec![],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Tag(0),
                 },
-                Rule {
+                IRule {
                     words: vec![Term::Add.id(), NTerm::Expr.id()],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Tag(1),
                 },
             ],
             vec![
-                Rule {
+                IRule {
                     words: vec![],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Tag(0),
                 },
-                Rule {
+                IRule {
                     words: vec![Term::Mul.id(), NTerm::Term.id()],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Tag(1),
                 },
             ],
         ];
@@ -507,76 +662,83 @@ mod test {
         );
         let removed = vec![
             vec![
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(0), SymbolId::Term(2), SymbolId::Term(3)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Direct(reducer.clone()),
                 },
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(1), SymbolId::NTerm(1)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Root(vec![
+                        reducer.clone(),
+                        reducer.clone(),
+                        reducer.clone(),
+                        reducer.clone(),
+                        reducer.clone(),
+                    ]),
                 },
             ],
             vec![
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(2), SymbolId::Term(3)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Tag(0),
                 },
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(4), SymbolId::NTerm(2)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Nop,
                 },
             ],
             vec![
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(3)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Tag(1),
                 },
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(5)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Tag(2),
                 },
             ],
         ];
+        println!("-----------------------=");
         assert_eq!(Ok(removed), remove_common(rules));
     }
 
     #[test]
     fn test_all_firsts() {
         let reducer: Reducer<(), ()> = Rc::new(Box::new(|_: &mut Vec<ReduceSymbol<(), ()>>| {}));
-        let removed = vec![
+        let removed: IRules<(), ()> = vec![
             vec![
-                Rule {
+                IRule {
                     words: vec![SymbolId::NTerm(1), SymbolId::NTerm(2)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Nop,
                 },
-                Rule {
+                IRule {
                     words: vec![SymbolId::NTerm(3), SymbolId::NTerm(1)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Nop,
                 },
             ],
             vec![
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(0)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Nop,
                 },
-                Rule {
+                IRule {
                     words: vec![],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Nop,
                 },
             ],
             vec![
-                Rule {
+                IRule {
                     words: vec![SymbolId::Term(1)],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Nop,
                 },
-                Rule {
+                IRule {
                     words: vec![],
-                    reducer: reducer.clone(),
+                    reducer: IReducer::Nop,
                 },
             ],
-            vec![Rule {
+            vec![IRule {
                 words: vec![SymbolId::Term(2)],
-                reducer: reducer.clone(),
+                reducer: IReducer::Nop,
             }],
         ];
         let expected = vec![
@@ -767,33 +929,37 @@ mod test {
         };
         let removed = remove_common(rules).unwrap();
         let tbl = gen_table(removed);
-        let r_expr = Rule {
+        let r_expr = IRule {
             words: vec![NTerm::Term.id(), SymbolId::NTerm(3)],
-            reducer: reducer.clone(),
+            reducer: IReducer::Root(vec![reducer.clone(), reducer.clone()]),
         };
-        let r_term = Rule {
+        let r_term = IRule {
             words: vec![NTerm::Factor.id(), SymbolId::NTerm(4)],
-            reducer: reducer.clone(),
+            reducer: IReducer::Root(vec![reducer.clone(), reducer.clone()]),
         };
-        let r_factor1 = Rule {
+        let r_factor1 = IRule {
             words: vec![Term::Num(0).id()],
-            reducer: reducer.clone(),
+            reducer: IReducer::Direct(reducer.clone()),
         };
-        let r_factor2 = Rule {
+        let r_factor2 = IRule {
             words: vec![Term::LP.id(), NTerm::Expr.id(), Term::RP.id()],
-            reducer: reducer.clone(),
+            reducer: IReducer::Direct(reducer.clone()),
         };
-        let r_emp = Rule {
+        let r_expr_2_2 = IRule {
             words: vec![],
-            reducer: reducer.clone(),
+            reducer: IReducer::Tag(0),
         };
-        let r_expr_2 = Rule {
+        let r_expr_2_1 = IRule {
             words: vec![Term::Add.id(), NTerm::Expr.id()],
-            reducer: reducer.clone(),
+            reducer: IReducer::Tag(1),
         };
-        let r_term_2 = Rule {
+        let r_term_2_1 = IRule {
+            words: vec![],
+            reducer: IReducer::Tag(0),
+        };
+        let r_term_2_2 = IRule {
             words: vec![Term::Mul.id(), NTerm::Term.id()],
-            reducer: reducer.clone(),
+            reducer: IReducer::Tag(1),
         };
         let expected = vec![
             vec![None, None, Some(r_expr.clone()), Some(r_expr.clone()), None],
@@ -806,18 +972,18 @@ mod test {
                 None,
             ],
             vec![
-                Some(r_expr_2.clone()),
+                Some(r_expr_2_1.clone()),
                 None,
                 None,
                 None,
-                Some(r_emp.clone()),
+                Some(r_expr_2_2.clone()),
             ],
             vec![
-                Some(r_emp.clone()),
-                Some(r_term_2.clone()),
+                Some(r_term_2_1.clone()),
+                Some(r_term_2_2.clone()),
                 None,
                 None,
-                Some(r_emp.clone()),
+                Some(r_term_2_1.clone()),
             ],
         ];
         assert_eq!(Ok(expected), tbl);
@@ -972,7 +1138,7 @@ fn follows<T, Ast>(rules: &IRules<T, Ast>) -> Result<FollowSet, Error> {
     Ok(fo)
 }
 
-type Table<T, Ast> = Vec<Vec<Option<Rule<T, Ast>>>>;
+type Table<T, Ast> = Vec<Vec<Option<IRule<T, Ast>>>>;
 
 fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, Error> {
     let mut tbl = Vec::new();
@@ -980,6 +1146,9 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
     tbl.iter_mut().for_each(|v| v.resize_with(T::N, || None));
     let firsts = firsts(&rules)?;
     let follows = follows(&rules)?;
+    println!("rules {:?}", rules);
+    println!("first {:?}", firsts);
+    println!("follow {:?}", follows);
     for nt_idx in 0..rules.len() {
         for t_idx in 0..T::N {
             for (w_idx, first_of_word) in firsts[nt_idx].iter().enumerate() {
@@ -989,6 +1158,12 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
                     if tbl[nt_idx][t_idx].is_some() {
                         return Err(Error::ThisIsNotLL1);
                     } else {
+                        if first_of_word.set.contains(&t_idx) {
+                            println!("{} {} by first", nt_idx, t_idx);
+                        } else {
+                            println!("{} {} by follow", nt_idx, t_idx);
+                        }
+                        println!("{:?}", rules[nt_idx][w_idx].clone());
                         tbl[nt_idx][t_idx] = Some(rules[nt_idx][w_idx].clone());
                     }
                 }
@@ -1023,7 +1198,8 @@ where
             }
         })
         .collect::<Vec<ReduceSymbol<T, Ast>>>();
-    let mut reducer_stack: Vec<Reducer<T, Ast>> = Vec::new();
+    let mut reducer_stack: Vec<Vec<Reducer<T, Ast>>> = Vec::new();
+    let mut reducer_select = Vec::new();
     let mut child_count: Vec<usize> = Vec::new();
     let mut state = Vec::new();
     state.push(eof.id());
@@ -1034,7 +1210,8 @@ where
                 return Err(Error::SyntaxError);
             }
             while child_count.last() == Some(&1) {
-                let reducer = reducer_stack.pop().unwrap();
+                let reducers = reducer_stack.pop().unwrap();
+                let reducer: &Reducer<T, Ast> = &reducers[reducer_select.pop().unwrap()];
                 reducer(&mut ast_stack);
                 child_count.pop();
             }
@@ -1045,7 +1222,14 @@ where
         } else if let SymbolId::NTerm(id) = top_state {
             if let Some(rewrite) = &tbl[id][*input_id.last().ok_or(Error::SyntaxError)?] {
                 child_count.push(rewrite.words.len());
-                reducer_stack.push(rewrite.reducer.clone());
+                if let IReducer::Tag(tag) = rewrite.reducer {
+                    reducer_select.push(tag);
+                } else if let IReducer::Direct(reducer) = &rewrite.reducer {
+                    reducer_select.push(0);
+                    reducer_stack.push(vec![reducer.clone()]);
+                } else if let IReducer::Root(reducers) = &rewrite.reducer {
+                    reducer_stack.push(reducers.clone());
+                }
                 for id in rewrite.words.iter().rev() {
                     state.push(id.clone());
                 }
