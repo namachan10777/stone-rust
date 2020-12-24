@@ -82,13 +82,71 @@ impl<T, Ast> PartialEq<Rule<T, Ast>> for Rule<T, Ast> {
     }
 }
 
+enum IReducer<T, Ast> {
+    Tag(usize),
+    Root(HashMap<Vec<usize>, Reducer<T, Ast>>),
+}
+
+impl<T, Ast> Clone for IReducer<T, Ast> {
+    fn clone(&self) -> Self {
+        match self {
+            IReducer::Tag(id) => IReducer::Tag(*id),
+            IReducer::Root(map) => IReducer::Root(map.clone()),
+        }
+    }
+}
+
+impl<T, Ast> fmt::Debug for IReducer<T, Ast> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self {
+            IReducer::Tag(id) => f.write_fmt(format_args!("Tag({})", *id)),
+            IReducer::Root(map) => f.debug_list().entries(map.keys()).finish(),
+        }
+    }
+}
+
+impl<T, Ast> PartialEq for IReducer<T, Ast> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (IReducer::Tag(lid), IReducer::Tag(rid)) => lid == rid,
+            (IReducer::Root(lmap), IReducer::Root(rmap)) => lmap.keys().eq(rmap.keys()),
+            _ => false,
+        }
+    }
+}
+
+struct IRule<T, Ast> {
+    words: Vec<SymbolId>,
+    reducer: IReducer<T, Ast>,
+}
+impl<T,Ast> fmt::Debug for IRule<T,Ast> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        f.debug_struct("IRule").field("words", &self.words).field("reducer", &self.reducer).finish()
+    }
+}
+
+impl<T,Ast> Clone for IRule<T,Ast> {
+    fn clone(&self) -> Self {
+        Self {
+            words: self.words.clone(),
+            reducer: self.reducer.clone(),
+        }
+    }
+}
+
+impl<T,Ast> PartialEq for IRule<T,Ast> {
+    fn eq(&self, other: &Self) -> bool {
+        self.words.eq(&other.words) && self.reducer.eq(&other.reducer)
+    }
+}
+
 // key is a cardinal of non-terminal symbol
 pub type Rules<T, Ast> = HashMap<usize, Vec<Rule<T, Ast>>>;
-pub type IRules<T, Ast> = Vec<Vec<Rule<T, Ast>>>;
+pub type IRules<T, Ast> = Vec<Vec<IRule<T, Ast>>>;
 
 fn gen_fluxed_and_lasts_rule<T, Ast>(
     rules: &[Rule<T, Ast>],
-) -> (Rule<T, Ast>, Option<Vec<Rule<T, Ast>>>) {
+) -> (IRule<T, Ast>, Option<Vec<IRule<T, Ast>>>) {
     // FIXME
     let closure = |_: &mut Vec<ReduceSymbol<T, Ast>>| {};
     let noop: Reducer<T, Ast> = Rc::new(Box::new(closure.clone()));
@@ -114,7 +172,7 @@ fn gen_fluxed_and_lasts_rule<T, Ast>(
     if tails.clone().all(|rule| rule.words.len() == 0) {
         (common, None)
     } else {
-        (common, Some(tails.collect::<Vec<Rule<T, Ast>>>()))
+        (common, Some(tails.collect::<Vec<IRule<T, Ast>>>()))
     }
 }
 
