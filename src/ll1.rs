@@ -294,7 +294,6 @@ fn split_rules<T, Ast>(
     rule: &Vec<(usize, Vec<SymbolId>)>,
     nterm_offset: usize,
 ) -> Result<(Vec<IRule<T, Ast>>, Vec<Vec<IRule<T, Ast>>>), Error> {
-    println!("split rules {:?} {}", rule, nterm_offset);
     let mut rule = rule.to_vec();
     rule.sort_by(|a, b| cmp_symbolid_option(a.1.get(0), b.1.get(0)));
     let mut new_rule = Vec::new();
@@ -304,7 +303,6 @@ fn split_rules<T, Ast>(
         if i == rule.len() || rule[begin].1.get(0) != rule[i].1.get(0) {
             if i - begin > 1 {
                 if rule[begin].1.is_empty() {
-                    println!("allempty");
                     new_rule.push(IRule {
                         words: Vec::new(),
                         reducer: IReducer::Tag(rule[begin].0),
@@ -318,7 +316,6 @@ fn split_rules<T, Ast>(
                             reducer: IReducer::Tag(rule[begin].0),
                         });
                     } else {
-                        println!("split recurse {} ", n_sames);
                         let mut new_words = rule[begin].1[0..n_sames].to_vec();
                         new_words.push(SymbolId::NTerm(nterm_offset));
                         new_rule.push(IRule {
@@ -337,7 +334,6 @@ fn split_rules<T, Ast>(
                     }
                 }
             } else {
-                println!("cannot split");
                 new_rule.push(IRule {
                     words: rule[begin].1.clone(),
                     reducer: IReducer::Tag(rule[begin].0),
@@ -698,7 +694,6 @@ mod test {
                 },
             ],
         ];
-        println!("-----------------------=");
         assert_eq!(Ok(removed), remove_common(rules));
     }
 
@@ -1146,9 +1141,6 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
     tbl.iter_mut().for_each(|v| v.resize_with(T::N, || None));
     let firsts = firsts(&rules)?;
     let follows = follows(&rules)?;
-    println!("rules {:?}", rules);
-    println!("first {:?}", firsts);
-    println!("follow {:?}", follows);
     for nt_idx in 0..rules.len() {
         for t_idx in 0..T::N {
             for (w_idx, first_of_word) in firsts[nt_idx].iter().enumerate() {
@@ -1158,12 +1150,6 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
                     if tbl[nt_idx][t_idx].is_some() {
                         return Err(Error::ThisIsNotLL1);
                     } else {
-                        if first_of_word.set.contains(&t_idx) {
-                            println!("{} {} by first", nt_idx, t_idx);
-                        } else {
-                            println!("{} {} by follow", nt_idx, t_idx);
-                        }
-                        println!("{:?}", rules[nt_idx][w_idx].clone());
                         tbl[nt_idx][t_idx] = Some(rules[nt_idx][w_idx].clone());
                     }
                 }
@@ -1173,41 +1159,34 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
     Ok(tbl)
 }
 
-pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone, F>(
+pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone>(
     top: NT,
-    eof: T,
     rules: Rules<T, Ast>,
-    input: Vec<T>,
-) -> Result<Ast, Error>
-where
-    F: FnMut(&mut Vec<ReduceSymbol<T, Ast>>),
-{
+    mut input: Vec<T>,
+) -> Result<Ast, Error> {
     let removed = remove_common(rules)?;
     let tbl = gen_table(removed)?;
+    input.reverse();
     let mut input_id = input
         .iter()
         .map(|tok| tok.cardinal())
         .collect::<Vec<usize>>();
-    let mut ast_stack = input
-        .into_iter()
-        .filter_map(|tok| {
-            if tok.accept() {
-                Some(ReduceSymbol::Term(tok))
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<ReduceSymbol<T, Ast>>>();
+    let mut ast_stack = Vec::new();
     let mut reducer_stack: Vec<Vec<Reducer<T, Ast>>> = Vec::new();
     let mut reducer_select = Vec::new();
     let mut child_count: Vec<usize> = Vec::new();
     let mut state = Vec::new();
-    state.push(eof.id());
+    let noop: Reducer<T, Ast> = Rc::new(Box::new(|_| {}));
+    state.push(top.id());
     while !state.is_empty() {
         let top_state = state.pop().unwrap();
         if let SymbolId::Term(id) = top_state {
             if input_id.pop() != Some(id) {
                 return Err(Error::SyntaxError);
+            }
+            let input_top = input.pop().unwrap();
+            if input_top.accept() {
+                ast_stack.push(ReduceSymbol::Term(input_top));
             }
             while child_count.last() == Some(&1) {
                 let reducers = reducer_stack.pop().unwrap();
@@ -1217,18 +1196,44 @@ where
             }
             if !child_count.is_empty() {
                 let last_idx = child_count.len() - 1;
+                if last_idx == 0 && child_count[last_idx] == 0 {
+                    break;
+                }
                 child_count[last_idx] -= 1;
             }
         } else if let SymbolId::NTerm(id) = top_state {
             if let Some(rewrite) = &tbl[id][*input_id.last().ok_or(Error::SyntaxError)?] {
-                child_count.push(rewrite.words.len());
                 if let IReducer::Tag(tag) = rewrite.reducer {
                     reducer_select.push(tag);
+                    if !rewrite.words.is_empty() {
+                        reducer_select.push(0);
+                        reducer_stack.push(vec![noop.clone()]);
+                    }
                 } else if let IReducer::Direct(reducer) = &rewrite.reducer {
                     reducer_select.push(0);
                     reducer_stack.push(vec![reducer.clone()]);
                 } else if let IReducer::Root(reducers) = &rewrite.reducer {
                     reducer_stack.push(reducers.clone());
+                } else if let IReducer::Nop = &rewrite.reducer {
+                    reducer_select.push(0);
+                    reducer_stack.push(vec![noop.clone()]);
+                }
+                if rewrite.words.is_empty() {
+                    while child_count.last() == Some(&1) {
+                        let reducers = reducer_stack.pop().unwrap();
+                        let reducer: &Reducer<T, Ast> = &reducers[reducer_select.pop().unwrap()];
+                        reducer(&mut ast_stack);
+                        child_count.pop();
+                    }
+                    if !child_count.is_empty() {
+                        let last_idx = child_count.len() - 1;
+                        if last_idx == 0 && child_count[last_idx] == 0 {
+                            break;
+                        }
+                        child_count[last_idx] -= 1;
+                    }
+                } else {
+                    child_count.push(rewrite.words.len());
                 }
                 for id in rewrite.words.iter().rev() {
                     state.push(id.clone());
@@ -1246,4 +1251,172 @@ where
         }
     }
     return Err(Error::SyntaxError);
+}
+
+#[cfg(test)]
+mod full_test {
+    use super::*;
+    macro_rules! map {
+        { $($key:expr => $value:expr),* } => {
+            {
+                let mut hash = HashMap::new();
+                $(
+                    hash.insert($key, $value);
+                )*
+                hash
+            }
+        };
+    }
+
+    macro_rules! set {
+        { $($value:expr),* } => {
+            {
+                let mut hash = HashSet::new();
+                $(
+                    hash.insert($value);
+                )*
+                hash
+            }
+        };
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum Term {
+        Num(i64),
+        LP,
+        RP,
+        Add,
+        Mul,
+        Eof,
+    }
+
+    impl Terminal for Term {
+        fn cardinal(&self) -> usize {
+            match self {
+                Term::Add => 0,
+                Term::Mul => 1,
+                Term::Num(_) => 2,
+                Term::LP => 3,
+                Term::RP => 4,
+                Term::Eof => 5,
+            }
+        }
+
+        const N: usize = 6;
+        fn accept(&self) -> bool {
+            if let Term::Num(_) = self {
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum NTerm {
+        Root,
+        Expr,
+        Term,
+        Factor,
+    }
+
+    impl NonTerminal for NTerm {
+        const N: usize = 4;
+        fn cardinal(&self) -> usize {
+            match self {
+                NTerm::Root => 0,
+                NTerm::Expr => 1,
+                NTerm::Term => 2,
+                NTerm::Factor => 3,
+            }
+        }
+    }
+
+    fn gen_rule() -> Rules<Term, i64> {
+        let reduce_top: Reducer<Term, i64> = Rc::new(Box::new(|s| {}));
+
+        let reduce_top1: Reducer<Term, i64> = Rc::new(Box::new(|s| {}));
+
+        let reduce_top2: Reducer<Term, i64> = Rc::new(Box::new(|s| {}));
+        let reduce_num: Reducer<Term, i64> = Rc::new(Box::new(|mut stack| {
+            if let ReduceSymbol::Term(Term::Num(n)) = stack.pop().unwrap() {
+                stack.push(ReduceSymbol::Ast(n));
+            }
+        }));
+        let reduce_add: Reducer<Term, i64> = Rc::new(Box::new(|mut stack| {
+            if let ReduceSymbol::Ast(n) = stack.pop().unwrap() {
+                if let ReduceSymbol::Ast(m) = stack.pop().unwrap() {
+                    stack.push(ReduceSymbol::Ast(n + m));
+                }
+            }
+        }));
+        let reduce_mul: Reducer<Term, i64> = Rc::new(Box::new(|mut stack| {
+            if let ReduceSymbol::Ast(n) = stack.pop().unwrap() {
+                if let ReduceSymbol::Ast(m) = stack.pop().unwrap() {
+                    stack.push(ReduceSymbol::Ast(n * m));
+                }
+            }
+        }));
+        map! {
+            NTerm::Root.cardinal()=> vec![
+                Rule { words: vec![NTerm::Expr.id(), Term::Eof.id()], reducer: reduce_top.clone() },
+            ],
+            NTerm::Expr.cardinal()=> vec![
+                Rule { words: vec![NTerm::Term.id()], reducer: reduce_top1.clone()},
+                Rule { words: vec![NTerm::Term.id(), Term::Add.id(), NTerm::Expr.id()], reducer: reduce_add.clone()}
+            ],
+            NTerm::Term.cardinal()=>vec![
+                 Rule { words: vec![NTerm::Factor.id()], reducer: reduce_top2.clone()},
+                 Rule { words: vec![NTerm::Factor.id(), Term::Mul.id(), NTerm::Term.id()], reducer: reduce_mul.clone()}
+            ],
+            NTerm::Factor.cardinal()=>vec![
+                  Rule { words: vec![Term::Num(0).id()], reducer: reduce_num.clone()},
+                  Rule { words: vec![Term::LP.id(), NTerm::Expr.id(), Term::RP.id()], reducer: reduce_top2.clone()}
+            ]
+        }
+    }
+
+    #[test]
+    fn num() {
+        let input = vec![Term::Num(123), Term::Eof];
+        let parsed = ll1(NTerm::Root, gen_rule(), input).unwrap();
+        assert_eq!(parsed, 123);
+    }
+
+    #[test]
+    fn num_paren() {
+        let input = vec![Term::LP, Term::Num(123), Term::RP, Term::Eof];
+        let parsed = ll1(NTerm::Root, gen_rule(), input).unwrap();
+        assert_eq!(parsed, 123);
+    }
+
+    #[test]
+    fn add() {
+        let input = vec![Term::Num(123), Term::Add, Term::Num(111), Term::Eof];
+        let parsed = ll1(NTerm::Root, gen_rule(), input).unwrap();
+        assert_eq!(parsed, 234);
+    }
+
+    #[test]
+    fn mul() {
+        let input = vec![Term::Num(123), Term::Mul, Term::Num(111), Term::Eof];
+        let parsed = ll1(NTerm::Root, gen_rule(), input).unwrap();
+        assert_eq!(parsed, 13653);
+    }
+
+    #[test]
+    fn complex() {
+        let input = vec![
+            Term::Num(7),
+            Term::Mul,
+            Term::LP,
+            Term::Num(111),
+            Term::Add,
+            Term::Num(9),
+            Term::RP,
+            Term::Eof,
+        ];
+        let parsed = ll1(NTerm::Root, gen_rule(), input).unwrap();
+        assert_eq!(parsed, 840);
+    }
 }
