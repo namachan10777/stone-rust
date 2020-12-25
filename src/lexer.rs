@@ -104,6 +104,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
             return Err(Error::LexerError);
         }
     }
+    while tokens.last() == Some(&Token::EOL) {
+        tokens.pop();
+    }
+    tokens.push(Token::EOL);
     tokens.push(Token::EOF);
     Ok(tokens)
 }
@@ -123,6 +127,7 @@ mod test {
                 Token::EOL,
                 Token::RB,
                 Token::LB,
+                Token::EOL,
                 Token::EOF
             ])
         );
