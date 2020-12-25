@@ -31,6 +31,8 @@ pub enum SymbolId {
 
 use std::cmp::Ordering;
 
+// 先頭比較で共通部分削除を実行するための実装
+// あんまり順序をよく考えてない
 impl PartialOrd<Self> for SymbolId {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
@@ -50,6 +52,7 @@ pub enum Error {
     RuleMustBeNonTerminal,
 }
 
+// Termで終端記号を保持し、Astはクロージャがメモ代わりに使う
 #[derive(Debug)]
 pub enum ReduceSymbol<T: fmt::Debug, Ast: fmt::Debug> {
     Term(T),
@@ -57,7 +60,9 @@ pub enum ReduceSymbol<T: fmt::Debug, Ast: fmt::Debug> {
 }
 
 pub type Words = Vec<SymbolId>;
+// ReduceSymbolを操作してAstを構築する関数
 type Reducer<T, Ast> = Rc<Box<dyn Fn(&mut Vec<ReduceSymbol<T, Ast>>)>>;
+// A_i -> w_ij
 pub struct Rule<T: fmt::Debug, Ast: fmt::Debug> {
     pub words: Words,
     pub reducer: Reducer<T, Ast>,
@@ -84,9 +89,17 @@ impl<T: fmt::Debug, Ast: fmt::Debug> PartialEq<Rule<T, Ast>> for Rule<T, Ast> {
 }
 
 enum IReducer<T: fmt::Debug, Ast: fmt::Debug> {
+    // 終端に付く。Rootが保持しているReducerについて、
+    // どれを使うかを決める(先頭は共通化されてまとめられているので最後まで展開しないとどれで還元するか決められない）
+    // 終端まで還元されてから根本が還元されるので必ずRootに対するTagは適応される
     Tag(usize),
+    // RootとTagの間に埋める。何もしない
     Nop,
+    // 共通部分にまとめる必要がない場合に
     Direct(Reducer<T, Ast>),
+    // 一つの終端記号の言語列と還元規則の対応をそのままCloneする
+    // 非効率だが実装は楽。どうせ大してメモリ食べない
+    // 共通部分はまとめるだけで増えないのでこれでいける
     Root(Vec<Reducer<T, Ast>>),
 }
 
@@ -124,6 +137,7 @@ impl<T: fmt::Debug, Ast: fmt::Debug> PartialEq for IReducer<T, Ast> {
     }
 }
 
+// A_i -> w_ij
 struct IRule<T: fmt::Debug, Ast: fmt::Debug> {
     words: Vec<SymbolId>,
     reducer: IReducer<T, Ast>,
@@ -156,106 +170,6 @@ impl<T: fmt::Debug, Ast: fmt::Debug> PartialEq for IRule<T, Ast> {
 pub type Rules<T, Ast> = HashMap<usize, Vec<Rule<T, Ast>>>;
 type IRules<T, Ast> = Vec<Vec<IRule<T, Ast>>>;
 
-/*fn gen_fluxed_and_lasts_rule<T, Ast>(
-    rules: &[Rule<T, Ast>],
-) -> (IRule<T, Ast>, Option<Vec<IRule<T, Ast>>>) {
-    // FIXME
-    let closure = |_: &mut Vec<ReduceSymbol<T, Ast>>| {};
-    let noop: Reducer<T, Ast> = Rc::new(Box::new(closure.clone()));
-    let mut until_common_idx = 0;
-    'linear_check: loop {
-        let mut sample = rules[0].words.get(until_common_idx);
-        for rule in rules {
-            if rule.words.len() == until_common_idx || sample != rule.words.get(until_common_idx) {
-                break 'linear_check;
-            }
-        }
-        until_common_idx += 1;
-        sample = rules[0].words.get(until_common_idx);
-    }
-    let common = Rule {
-        reducer: rules[0].reducer.clone(),
-        words: rules[0].words[0..until_common_idx].to_vec(),
-    };
-    let tails = rules.iter().map(|rule| Rule {
-        reducer: noop.clone(),
-        words: rule.words[until_common_idx..].to_owned(),
-    });
-    if tails.clone().all(|rule| rule.words.len() == 0) {
-        (common, None)
-    } else {
-        (common, Some(tails.collect::<Vec<IRule<T, Ast>>>()))
-    }
-}
-
-// internal impl
-// 先頭が共通していれば共通部分単体のルールに書き換え、共通以後を新ルールにして追加、新ルールにも適用
-fn remove_common_impl<'a, T, Ast>(rules: &mut IRules<T, Ast>, target_idx: usize) {
-    rules[target_idx].sort_by(|rule1, rule2| {
-        if rule1.words.is_empty() {
-            Ordering::Less
-        } else if rule2.words.is_empty() {
-            Ordering::Greater
-        } else {
-            rule1.words[0].partial_cmp(&rule2.words[0]).unwrap()
-        }
-    });
-    let mut begin = 0;
-    let mut common_removed_rule = Vec::new();
-    for i in 0..rules[target_idx].len() {
-        if rules[target_idx][begin].words.get(0) != rules[target_idx][i].words.get(0) {
-            // 先頭を同じくするコードが複数ある場合
-            if i - begin > 1 {
-                let (mut replaced, new_rule) =
-                    gen_fluxed_and_lasts_rule(&rules[target_idx][begin..i]);
-                if let Some(new_rule) = new_rule {
-                    replaced.words.push(SymbolId::NTerm(rules.len()));
-                    rules.push(new_rule);
-                    remove_common_impl(rules, rules.len() - 1);
-                }
-                common_removed_rule.push(replaced);
-            } else {
-                common_removed_rule.push(rules[target_idx][begin].clone());
-            }
-            begin = i;
-        }
-    }
-    if rules[target_idx].len() - begin > 1 {
-        let (mut replaced, new_rule) =
-            gen_fluxed_and_lasts_rule(&rules[target_idx][begin..rules[target_idx].len()]);
-        if let Some(new_rule) = new_rule {
-            replaced.words.push(SymbolId::NTerm(rules.len()));
-            rules.push(new_rule);
-            remove_common_impl(rules, rules.len() - 1);
-        }
-        common_removed_rule.push(replaced);
-    } else {
-        common_removed_rule.push(rules[target_idx][begin].clone());
-    }
-    rules[target_idx] = common_removed_rule;
-}
-
-// 共通部分削除
-// A B C D | A B C E | A B F
-// -> A B -> (C (D | E) | F)
-fn remove_common<T, Ast>(rules: Rules<T, Ast>) -> Result<IRules<T, Ast>, Error>
-where
-    //F: FnMut(&mut Vec<ReduceSymbol<T, Ast>>),
-{
-    let mut pairs = rules
-        .into_iter()
-        .collect::<Vec<(usize, Vec<Rule<T, Ast>>)>>();
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut tbl = pairs
-        .into_iter()
-        .map(|(_, rule)| rule)
-        .collect::<Vec<Vec<Rule<T, Ast>>>>();
-    for i in 0..tbl.len() {
-        remove_common_impl(&mut tbl, i);
-    }
-    Ok(tbl)
-}*/
-
 fn cmp_symbolid_option(a: Option<&SymbolId>, b: Option<&SymbolId>) -> Ordering {
     match (a, b) {
         (None, None) => Ordering::Equal,
@@ -268,10 +182,14 @@ fn cmp_symbolid_option(a: Option<&SymbolId>, b: Option<&SymbolId>) -> Ordering {
     }
 }
 
-fn cmp_rule<T: fmt::Debug, Ast: fmt::Debug>(a: &Rule<T, Ast>, b: &Rule<T, Ast>) -> Ordering {
+fn cmp_head_of_rule<T: fmt::Debug, Ast: fmt::Debug>(
+    a: &Rule<T, Ast>,
+    b: &Rule<T, Ast>,
+) -> Ordering {
     cmp_symbolid_option(a.words.get(0), b.words.get(0))
 }
 
+// 先頭いくつまで同じかを計算
 fn n_sames(rules: &[(usize, Vec<SymbolId>)]) -> usize {
     let mut cnt = 0;
     if rules.is_empty() {
@@ -293,6 +211,7 @@ fn n_sames(rules: &[(usize, Vec<SymbolId>)]) -> usize {
 
 type Splited<T, Ast> = (Vec<IRule<T, Ast>>, Vec<Vec<IRule<T, Ast>>>);
 
+// 一つの終端記号について先頭でまとめ、以降を分割する
 fn split_rules<T: fmt::Debug, Ast: fmt::Debug>(
     rule: &[(usize, Vec<SymbolId>)],
     nterm_offset: usize,
@@ -304,6 +223,7 @@ fn split_rules<T: fmt::Debug, Ast: fmt::Debug>(
     let mut begin = 0;
     for i in 0..rule.len() + 1 {
         if i == rule.len() || rule[begin].1.get(0) != rule[i].1.get(0) {
+            // 共通部分が存在する場合
             if i - begin > 1 {
                 if rule[begin].1.is_empty() {
                     new_rule.push(IRule {
@@ -312,7 +232,7 @@ fn split_rules<T: fmt::Debug, Ast: fmt::Debug>(
                     });
                 } else {
                     let n_sames = n_sames(&rule[begin..i]);
-                    // 残りが全て同じ場合
+                    // 全て同じ記号列の場合
                     if rule.iter().map(|r| r.1.len()).fold(0, |a, b| a.max(b)) == n_sames {
                         new_rule.push(IRule {
                             words: rule[begin].1.clone(),
@@ -320,6 +240,7 @@ fn split_rules<T: fmt::Debug, Ast: fmt::Debug>(
                         });
                     } else {
                         let mut new_words = rule[begin].1[0..n_sames].to_vec();
+                        // 新しいルールは最後に追加されるのでnterm_offsetに飛ばす
                         new_words.push(SymbolId::NTerm(nterm_offset));
                         new_rule.push(IRule {
                             words: new_words,
@@ -332,11 +253,14 @@ fn split_rules<T: fmt::Debug, Ast: fmt::Debug>(
                                 .collect::<Vec<(usize, Vec<SymbolId>)>>(),
                             nterm_offset + 1 + added_nterm.len(),
                         )?;
+                        // 再帰的にマージ
                         added_nterm.push(generated_nterm);
                         added_nterm.append(&mut generated_nterms);
                     }
                 }
-            } else {
+            }
+            // 共通部分が存在しない場合は分割は終わりなのでTagを返す
+            else {
                 new_rule.push(IRule {
                     words: rule[begin].1.clone(),
                     reducer: IReducer::Tag(rule[begin].0),
@@ -368,11 +292,12 @@ fn remove_common<T: fmt::Debug, Ast: fmt::Debug>(
     let mut n_rules = rule_sorted.len();
     new_rules.resize(n_rules, Vec::new());
     for (nidx, mut nterm) in rule_sorted {
+        // Root向けにreducerの配列を作成しておく
         let reducers: Vec<Reducer<T, Ast>> = nterm
             .iter()
             .map(|rule| rule.1.reducer.clone())
             .collect::<Vec<Reducer<T, Ast>>>();
-        nterm.sort_by(|a, b| cmp_rule(&a.1, &b.1));
+        nterm.sort_by(|a, b| cmp_head_of_rule(&a.1, &b.1));
         let (replaced, mut added) = split_rules::<T, Ast>(
             &nterm
                 .into_iter()
@@ -384,8 +309,12 @@ fn remove_common<T: fmt::Debug, Ast: fmt::Debug>(
             .into_iter()
             .map(|rule| IRule {
                 words: rule.words,
+                // 実装の簡便化の為に書き換えで対処する
                 reducer: match rule.reducer {
+                    // Tagは共通部分が無いということ、
+                    // 先頭について共通部分が無いのでDirectに変換
                     IReducer::Tag(idx) => IReducer::Direct(reducers[idx].clone()),
+                    // Nopは共通部分がって分割した事を示すので、先頭はRoot
                     IReducer::Nop => IReducer::Root(reducers.clone()),
                     IReducer::Direct(_) => unreachable!(),
                     IReducer::Root(_) => unreachable!(),
@@ -477,108 +406,6 @@ mod test {
             }
         }
     }
-
-    /*
-    #[test]
-    fn test_gen_fluxed_and_lasts_rule() {
-        let dummy: Reducer<(), ()> = Rc::new(Box::new(|_: &mut Vec<ReduceSymbol<(), ()>>| {}));
-        let (common, tails) = gen_fluxed_and_lasts_rule(&[
-            Rule {
-                words: vec![
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                ],
-                reducer: dummy.clone(),
-            },
-            Rule {
-                words: vec![
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(1),
-                    SymbolId::NTerm(0),
-                ],
-                reducer: dummy.clone(),
-            },
-            Rule {
-                words: vec![
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(1),
-                    SymbolId::NTerm(2),
-                ],
-                reducer: dummy.clone(),
-            },
-        ]);
-        assert_eq!(
-            common,
-            Rule {
-                words: vec![SymbolId::NTerm(0), SymbolId::NTerm(0)],
-                reducer: dummy.clone()
-            }
-        );
-        assert_eq!(
-            tails,
-            Some(vec![
-                Rule {
-                    words: vec![SymbolId::NTerm(0), SymbolId::NTerm(0)],
-                    reducer: dummy.clone()
-                },
-                Rule {
-                    words: vec![SymbolId::NTerm(1), SymbolId::NTerm(0)],
-                    reducer: dummy.clone()
-                },
-                Rule {
-                    words: vec![SymbolId::NTerm(1), SymbolId::NTerm(2)],
-                    reducer: dummy.clone()
-                },
-            ])
-        );
-        let (common, tails) = gen_fluxed_and_lasts_rule(&[
-            Rule {
-                words: vec![
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                ],
-                reducer: dummy.clone(),
-            },
-            Rule {
-                words: vec![
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                ],
-                reducer: dummy.clone(),
-            },
-            Rule {
-                words: vec![
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                ],
-                reducer: dummy.clone(),
-            },
-        ]);
-        assert_eq!(
-            common,
-            Rule {
-                words: vec![
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0),
-                    SymbolId::NTerm(0)
-                ],
-                reducer: dummy.clone()
-            }
-        );
-        assert_eq!(tails, None);
-    }*/
-
     #[test]
     fn test_remove_common() {
         let reducer: Reducer<usize, usize> =
@@ -1010,6 +837,7 @@ type AllFirstSet = Vec<Vec<Vec<SymbolSet>>>;
 type FirstSet = Vec<Vec<SymbolSet>>;
 type FollowSet = Vec<HashSet<usize>>;
 
+// 各非終端記号についての各記号列において、あるインデックス以降の言語のFirst集合
 fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
     rules: &[Vec<IRule<T, Ast>>],
 ) -> Result<AllFirstSet, Error> {
@@ -1037,6 +865,7 @@ fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
     let mut count = 0;
     while changed {
         count += 1;
+        // 流石に左再帰してるでしょ（雑検知）
         if count > 10000 {
             return Err(Error::MayBeLeftCyclic);
         }
@@ -1047,18 +876,25 @@ fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
             for (w_idx, rule) in nterm.iter().enumerate() {
                 let mut has_eps = true;
                 let mut fiw_acc = HashSet::new();
+                // 後ろから舐めると計算コストを増やさずにスライスについてFirstを求められるんじゃ
                 for (s_idx, w) in rule.words.iter().enumerate().rev() {
                     let fiw_i = &mut fiw[a_idx][w_idx][s_idx];
                     if let SymbolId::NTerm(id) = w {
+                        // w A_i w'についてAがεを含む場合は
+                        // First(A_i w')をFirst('w)とFirst(A_i)の和集合とする
                         if fia[*id].has_eps {
                             fiw_i.set = fiw_i
                                 .set
                                 .union(&fiw_acc)
                                 .cloned()
                                 .collect::<HashSet<usize>>();
-                        } else {
+                        }
+                        // w A_i w'についてAがεを含まない場合は
+                        // First(A_i w')はFirst(A_i)となる
+                        else {
                             has_eps = false;
                         }
+                        // First(A)をFirst(A w')にとりあえずマージ
                         fiw_i.set = fiw_i
                             .set
                             .union(&fia[*id].set)
@@ -1066,6 +902,7 @@ fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
                             .collect::<HashSet<usize>>();
                         fiw_acc = fiw_i.set.clone();
                     } else if let SymbolId::Term(id) = w {
+                        // 終端季語なのでidのみを含む
                         fiw_acc = HashSet::new();
                         fiw_acc.insert(*id);
                         fiw_i.set = fiw_acc.clone();
@@ -1073,6 +910,8 @@ fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
                     }
                     fiw_i.has_eps = has_eps;
                 }
+                // 各非終端記号A_iについて先頭のFirstを求めてマージしていけばそれはFirst(A_i)
+                // getしているのは空言語の場合があるため
                 if let Some(ss) = &fiw[a_idx][w_idx].get(0) {
                     fia[a_idx].has_eps |= ss.has_eps;
                     fia[a_idx].set = fia[a_idx]
@@ -1081,6 +920,7 @@ fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
                         .cloned()
                         .collect::<HashSet<usize>>();
                 } else {
+                    // 空言語しか無い場合は当然εを含む
                     fia[a_idx].has_eps = true;
                 }
             }
@@ -1125,10 +965,13 @@ fn follows<T: fmt::Debug, Ast: fmt::Debug>(
             for (w_idx, rule) in nterm.iter().enumerate() {
                 for (s_idx, id) in rule.words.iter().enumerate() {
                     if let SymbolId::NTerm(id) = id {
+                        // A_i -> w A_j w'
+                        // という言語があった場合、Fo(A_j)にFirst(w')を追加（それはそう）
                         fo[*id] = fo[*id]
                             .union(&firsts[a_idx][w_idx][s_idx + 1].set)
                             .cloned()
                             .collect::<HashSet<usize>>();
+                        // w'が空の場合Fo(A_i)を追加
                         if firsts[a_idx][w_idx][s_idx + 1].has_eps {
                             fo[*id] = fo[*id]
                                 .union(&fo[a_idx])
@@ -1157,10 +1000,13 @@ fn gen_table<T: Terminal + fmt::Debug, Ast: fmt::Debug>(
     for nt_idx in 0..rules.len() {
         for t_idx in 0..T::N {
             for (w_idx, first_of_word) in firsts[nt_idx].iter().enumerate() {
+                // T[A,a]にA -> wが入るのは
+                // a ∈ Fi(w) ∨ (ε ∈ Fi(w) ∧ a ∈ Fo(A))
                 if first_of_word.set.contains(&t_idx)
                     || (first_of_word.has_eps && follows[nt_idx].contains(&t_idx))
                 {
                     if tbl[nt_idx][t_idx].is_some() {
+                        // 複数ある場合はLL(1)ではない（なぜなら共通部分は削除済みのため）
                         return Err(Error::ThisIsNotLL1(nt_idx));
                     } else {
                         tbl[nt_idx][t_idx] = Some(rules[nt_idx][w_idx].clone());
@@ -1205,6 +1051,7 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
     // reduce -> reducer + 1, child_count + 1
     while !state.is_empty() {
         let top_state = state.pop().unwrap();
+        // スタックの先頭が終端記号の場合
         if let SymbolId::Term(id) = top_state {
             if input_id.pop() != Some(id) {
                 return Err(Error::SyntaxError(format!("input doesn't match {}", id)));
@@ -1213,21 +1060,28 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
             if input_top.accept() {
                 ast_stack.push(ReduceSymbol::Term(input_top));
             }
+            // 還元の連鎖を開始
+            // 子が全て還元されると親の還元を行う
+            // 終端記号は全て還元されるのでトリガーになる
             while !reducer_stack.is_empty()
                 && reducer_stack[reducer_stack.len() - 1].child_count <= 1
             {
                 let i = reducer_stack.len() - 1;
+                // Rootの場合は伝搬されてきたTagを使って還元を実行
                 if !reducer_stack[i].reducers.is_empty() {
                     assert!(reducer_stack[i].propagation.is_some());
                     reducer_stack[i].reducers[reducer_stack[i].propagation.unwrap()](
                         &mut ast_stack,
                     );
-                } else if i > 0 {
+                }
+                // トップがRootへのTagの場合は伝搬させていく
+                else if i > 0 {
                     assert!(reducer_stack[i - 1].propagation.is_none());
                     reducer_stack[i - 1].propagation = reducer_stack[i].propagation;
                 }
                 reducer_stack.pop();
             }
+            // child_countを処理
             if !reducer_stack.is_empty() {
                 let i = reducer_stack.len() - 1;
                 reducer_stack[i].child_count -= 1;
@@ -1238,30 +1092,35 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
                 .ok_or_else(|| Error::SyntaxError(format!("stack remains {} {:?}", id, state)))?]
             {
                 if let IReducer::Tag(tag) = rewrite.reducer {
+                    // 伝搬できるようトップにセット
                     reducer_stack.push(Node {
                         reducers: vec![],
                         propagation: Some(tag),
                         child_count: rewrite.words.len(),
                     });
                 } else if let IReducer::Direct(reducer) = &rewrite.reducer {
+                    // 最初から伝播済み
                     reducer_stack.push(Node {
                         reducers: vec![reducer.clone()],
                         propagation: Some(0),
                         child_count: rewrite.words.len(),
                     });
                 } else if let IReducer::Root(reducers) = &rewrite.reducer {
+                    // 伝播待ちでReducerだけ持っている
                     reducer_stack.push(Node {
                         reducers: reducers.clone(),
                         propagation: None,
                         child_count: rewrite.words.len(),
                     });
                 } else if let IReducer::Nop = &rewrite.reducer {
+                    // 何もしない（伝播は還元の連鎖の中で行う）
                     reducer_stack.push(Node {
                         reducers: vec![],
                         propagation: None,
                         child_count: rewrite.words.len(),
                     });
                 }
+                // 空言語の場合は還元できる
                 if rewrite.words.is_empty() {
                     while !reducer_stack.is_empty()
                         && reducer_stack[reducer_stack.len() - 1].child_count <= 1
@@ -1283,6 +1142,7 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
                         reducer_stack[i].child_count -= 1;
                     }
                 }
+                // 状態書き換え
                 for id in rewrite.words.iter().rev() {
                     state.push(id.clone());
                 }
@@ -1295,6 +1155,7 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
             }
         }
     }
+    // 最後に諸々の状態をチェックして正常終了ならOk
     if reducer_stack.is_empty() && input_id.is_empty() && ast_stack.len() == 1 {
         if let ReduceSymbol::Ast(ast) = &ast_stack[0] {
             return Ok(ast.clone());
