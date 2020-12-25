@@ -46,22 +46,23 @@ impl PartialOrd<Self> for SymbolId {
 pub enum Error {
     SyntaxError,
     MayBeLeftCyclic,
-    ThisIsNotLL1,
+    ThisIsNotLL1(usize),
     RuleMustBeNonTerminal,
 }
 
-pub enum ReduceSymbol<T, Ast> {
+#[derive(Debug)]
+pub enum ReduceSymbol<T: fmt::Debug, Ast: fmt::Debug> {
     Term(T),
     Ast(Ast),
 }
 
 pub type Words = Vec<SymbolId>;
 type Reducer<T, Ast> = Rc<Box<dyn Fn(&mut Vec<ReduceSymbol<T, Ast>>)>>;
-pub struct Rule<T, Ast> {
-    words: Words,
-    reducer: Reducer<T, Ast>,
+pub struct Rule<T: fmt::Debug, Ast: fmt::Debug> {
+    pub words: Words,
+    pub reducer: Reducer<T, Ast>,
 }
-impl<T, Ast> Clone for Rule<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> Clone for Rule<T, Ast> {
     fn clone(&self) -> Self {
         Self {
             words: self.words.clone(),
@@ -70,26 +71,26 @@ impl<T, Ast> Clone for Rule<T, Ast> {
     }
 }
 
-impl<T, Ast> fmt::Debug for Rule<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> fmt::Debug for Rule<T, Ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         f.debug_list().entries(self.words.iter()).finish()
     }
 }
 
-impl<T, Ast> PartialEq<Rule<T, Ast>> for Rule<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> PartialEq<Rule<T, Ast>> for Rule<T, Ast> {
     fn eq(&self, other: &Self) -> bool {
         self.words.eq(&other.words)
     }
 }
 
-enum IReducer<T, Ast> {
+enum IReducer<T: fmt::Debug, Ast: fmt::Debug> {
     Tag(usize),
     Nop,
     Direct(Reducer<T, Ast>),
     Root(Vec<Reducer<T, Ast>>),
 }
 
-impl<T, Ast> Clone for IReducer<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> Clone for IReducer<T, Ast> {
     fn clone(&self) -> Self {
         match self {
             IReducer::Tag(id) => IReducer::Tag(*id),
@@ -100,7 +101,7 @@ impl<T, Ast> Clone for IReducer<T, Ast> {
     }
 }
 
-impl<T, Ast> fmt::Debug for IReducer<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> fmt::Debug for IReducer<T, Ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             IReducer::Tag(id) => f.write_fmt(format_args!("Tag({})", *id)),
@@ -111,7 +112,7 @@ impl<T, Ast> fmt::Debug for IReducer<T, Ast> {
     }
 }
 
-impl<T, Ast> PartialEq for IReducer<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> PartialEq for IReducer<T, Ast> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (IReducer::Tag(lid), IReducer::Tag(rid)) => lid == rid,
@@ -123,11 +124,11 @@ impl<T, Ast> PartialEq for IReducer<T, Ast> {
     }
 }
 
-struct IRule<T, Ast> {
+struct IRule<T: fmt::Debug, Ast: fmt::Debug> {
     words: Vec<SymbolId>,
     reducer: IReducer<T, Ast>,
 }
-impl<T, Ast> fmt::Debug for IRule<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> fmt::Debug for IRule<T, Ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         f.debug_struct("IRule")
             .field("words", &self.words)
@@ -136,7 +137,7 @@ impl<T, Ast> fmt::Debug for IRule<T, Ast> {
     }
 }
 
-impl<T, Ast> Clone for IRule<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> Clone for IRule<T, Ast> {
     fn clone(&self) -> Self {
         Self {
             words: self.words.clone(),
@@ -145,7 +146,7 @@ impl<T, Ast> Clone for IRule<T, Ast> {
     }
 }
 
-impl<T, Ast> PartialEq for IRule<T, Ast> {
+impl<T: fmt::Debug, Ast: fmt::Debug> PartialEq for IRule<T, Ast> {
     fn eq(&self, other: &Self) -> bool {
         self.words.eq(&other.words) && self.reducer.eq(&other.reducer)
     }
@@ -267,7 +268,7 @@ fn cmp_symbolid_option(a: Option<&SymbolId>, b: Option<&SymbolId>) -> Ordering {
     }
 }
 
-fn cmp_rule<T, Ast>(a: &Rule<T, Ast>, b: &Rule<T, Ast>) -> Ordering {
+fn cmp_rule<T: fmt::Debug, Ast: fmt::Debug>(a: &Rule<T, Ast>, b: &Rule<T, Ast>) -> Ordering {
     cmp_symbolid_option(a.words.get(0), b.words.get(0))
 }
 
@@ -290,7 +291,7 @@ fn n_sames(rules: &[(usize, Vec<SymbolId>)]) -> usize {
     return cnt;
 }
 
-fn split_rules<T, Ast>(
+fn split_rules<T: fmt::Debug, Ast: fmt::Debug>(
     rule: &Vec<(usize, Vec<SymbolId>)>,
     nterm_offset: usize,
 ) -> Result<(Vec<IRule<T, Ast>>, Vec<Vec<IRule<T, Ast>>>), Error> {
@@ -345,7 +346,9 @@ fn split_rules<T, Ast>(
     Ok((new_rule, added_nterm))
 }
 
-fn remove_common<T, Ast>(rule: Rules<T, Ast>) -> Result<IRules<T, Ast>, Error> {
+fn remove_common<T: fmt::Debug, Ast: fmt::Debug>(
+    rule: Rules<T, Ast>,
+) -> Result<IRules<T, Ast>, Error> {
     let mut rule_sorted = rule
         .into_iter()
         .map(|(nid, rules)| {
@@ -1003,7 +1006,9 @@ type AllFirstSet = Vec<Vec<Vec<SymbolSet>>>;
 type FirstSet = Vec<Vec<SymbolSet>>;
 type FollowSet = Vec<HashSet<usize>>;
 
-fn all_firsts<T, Ast>(rules: &IRules<T, Ast>) -> Result<AllFirstSet, Error> {
+fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
+    rules: &IRules<T, Ast>,
+) -> Result<AllFirstSet, Error> {
     let mut fiw = Vec::new();
     let mut fia = Vec::new();
     // initialize
@@ -1083,7 +1088,7 @@ fn all_firsts<T, Ast>(rules: &IRules<T, Ast>) -> Result<AllFirstSet, Error> {
     Ok(fiw)
 }
 
-fn firsts<T, Ast>(rules: &IRules<T, Ast>) -> Result<FirstSet, Error> {
+fn firsts<T: fmt::Debug, Ast: fmt::Debug>(rules: &IRules<T, Ast>) -> Result<FirstSet, Error> {
     all_firsts(&rules).map(|firsts| {
         firsts
             .iter()
@@ -1098,7 +1103,7 @@ fn firsts<T, Ast>(rules: &IRules<T, Ast>) -> Result<FirstSet, Error> {
 }
 
 /// (id of non-terminal symbol, id of rule in the non-terminal symbol) -> id of terminal symbol
-fn follows<T, Ast>(rules: &IRules<T, Ast>) -> Result<FollowSet, Error> {
+fn follows<T: fmt::Debug, Ast: fmt::Debug>(rules: &IRules<T, Ast>) -> Result<FollowSet, Error> {
     let mut fo = FollowSet::new();
     let mut changed = true;
     fo.resize_with(rules.len(), || Default::default());
@@ -1135,7 +1140,9 @@ fn follows<T, Ast>(rules: &IRules<T, Ast>) -> Result<FollowSet, Error> {
 
 type Table<T, Ast> = Vec<Vec<Option<IRule<T, Ast>>>>;
 
-fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, Error> {
+fn gen_table<T: Terminal + fmt::Debug, Ast: fmt::Debug>(
+    rules: IRules<T, Ast>,
+) -> Result<Table<T, Ast>, Error> {
     let mut tbl = Vec::new();
     tbl.resize_with(rules.len(), || Vec::new());
     tbl.iter_mut().for_each(|v| v.resize_with(T::N, || None));
@@ -1148,7 +1155,7 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
                     || (first_of_word.has_eps && follows[nt_idx].contains(&t_idx))
                 {
                     if tbl[nt_idx][t_idx].is_some() {
-                        return Err(Error::ThisIsNotLL1);
+                        return Err(Error::ThisIsNotLL1(nt_idx));
                     } else {
                         tbl[nt_idx][t_idx] = Some(rules[nt_idx][w_idx].clone());
                     }
@@ -1159,12 +1166,15 @@ fn gen_table<T: Terminal, Ast>(rules: IRules<T, Ast>) -> Result<Table<T, Ast>, E
     Ok(tbl)
 }
 
-pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone>(
+pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
     top: NT,
     rules: Rules<T, Ast>,
     mut input: Vec<T>,
 ) -> Result<Ast, Error> {
     let removed = remove_common(rules)?;
+    for (idx, x) in removed.iter().enumerate() {
+        println!("{} {:?}", idx, x);
+    }
     let tbl = gen_table(removed)?;
     input.reverse();
     let mut input_id = input
@@ -1179,11 +1189,14 @@ pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone>(
     let noop: Reducer<T, Ast> = Rc::new(Box::new(|_| {}));
     state.push(top.id());
     while !state.is_empty() {
+        println!("{:?}", state);
         let top_state = state.pop().unwrap();
         if let SymbolId::Term(id) = top_state {
             if input_id.pop() != Some(id) {
+                println!("input unmatch");
                 return Err(Error::SyntaxError);
             }
+            println!("shift {}", id);
             let input_top = input.pop().unwrap();
             if input_top.accept() {
                 ast_stack.push(ReduceSymbol::Term(input_top));
@@ -1203,6 +1216,7 @@ pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone>(
             }
         } else if let SymbolId::NTerm(id) = top_state {
             if let Some(rewrite) = &tbl[id][*input_id.last().ok_or(Error::SyntaxError)?] {
+                println!("rewrite by {:?}", rewrite.words);
                 if let IReducer::Tag(tag) = rewrite.reducer {
                     reducer_select.push(tag);
                     if !rewrite.words.is_empty() {
@@ -1239,6 +1253,7 @@ pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone>(
                     state.push(id.clone());
                 }
             } else {
+                println!("rule not found");
                 return Err(Error::SyntaxError);
             }
         }
@@ -1250,6 +1265,7 @@ pub fn ll1<T: Terminal, NT: NonTerminal, Ast: Clone>(
             }
         }
     }
+    println!("exit with failed {:?} {:?}", input_id, ast_stack);
     return Err(Error::SyntaxError);
 }
 

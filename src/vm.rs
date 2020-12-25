@@ -1,8 +1,10 @@
 use crate::{Internal, Object};
 
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum Exception {}
 
+#[allow(dead_code)]
 pub struct Vm {
     #[allow(dead_code)]
     codes: Vec<u8>,
@@ -25,6 +27,7 @@ pub struct Vm {
 }
 
 impl Vm {
+    #[allow(dead_code)]
     pub fn compile(internal: Internal) -> Self {
         Vm {
             // TODO compile Flat -> byte codes
@@ -40,6 +43,7 @@ impl Vm {
         }
     }
 
+    #[allow(dead_code)]
     pub fn execute(&mut self) -> Result<(), Exception> {
         Ok(())
     }
