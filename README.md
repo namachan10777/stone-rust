@@ -2,6 +2,7 @@
 
 [![GitHub Actions](https://github.com/namachan10777/stone-rust/workflows/Rust/badge.svg)](https://github.com/namachan10777/stone-rust/actions?query=workflow:Rust)
 
+本リポジトリは[GitHub](https://github.com/namachan10777/stone-rust)上にてホスティングされている。
 Compiler for stone language.
 
 # 実装内容
