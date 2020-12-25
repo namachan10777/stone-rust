@@ -44,7 +44,7 @@ impl PartialOrd<Self> for SymbolId {
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    SyntaxError,
+    SyntaxError(String),
     MayBeLeftCyclic,
     ThisIsNotLL1(usize),
     RuleMustBeNonTerminal,
@@ -1172,15 +1172,26 @@ fn gen_table<T: Terminal + fmt::Debug, Ast: fmt::Debug>(
     Ok(tbl)
 }
 
+struct Node<T: fmt::Debug, Ast: Clone + fmt::Debug> {
+    reducers: Vec<Reducer<T, Ast>>,
+    propagation: Option<usize>,
+    child_count: usize,
+}
+impl<T: fmt::Debug, Ast: fmt::Debug + Clone> fmt::Debug for Node<T, Ast> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        f.write_fmt(format_args!(
+            "({:?}, {})",
+            self.propagation, self.child_count
+        ))
+    }
+}
+
 pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
     top: NT,
     rules: Rules<T, Ast>,
     mut input: Vec<T>,
 ) -> Result<Ast, Error> {
     let removed = remove_common(rules)?;
-    for (idx, x) in removed.iter().enumerate() {
-        println!("{} {:?}", idx, x);
-    }
     let tbl = gen_table(&removed)?;
     input.reverse();
     let mut input_id = input
@@ -1188,89 +1199,120 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
         .map(|tok| tok.cardinal())
         .collect::<Vec<usize>>();
     let mut ast_stack = Vec::new();
-    let mut reducer_stack: Vec<Vec<Reducer<T, Ast>>> = Vec::new();
-    let mut reducer_select = Vec::new();
-    let mut child_count: Vec<usize> = Vec::new();
+    let mut reducer_stack: Vec<Node<T, Ast>> = Vec::new();
     let mut state = Vec::new();
-    let noop: Reducer<T, Ast> = Rc::new(Box::new(|_| {}));
+    let noop: Reducer<T, Ast> = Rc::new(Box::new(|_| {
+        println!("noop");
+    }));
     state.push(top.id());
+    // reduce -> reducer + 1, child_count + 1
     while !state.is_empty() {
+        println!("{:?}", reducer_stack);
+        println!("------------------------");
         println!("{:?}", state);
+        /*println!("{:?}", state);*/
         let top_state = state.pop().unwrap();
         if let SymbolId::Term(id) = top_state {
             if input_id.pop() != Some(id) {
-                println!("input unmatch");
-                return Err(Error::SyntaxError);
+                return Err(Error::SyntaxError(format!("input doesn't match {}", id)));
             }
-            println!("shift {}", id);
             let input_top = input.pop().unwrap();
             if input_top.accept() {
                 ast_stack.push(ReduceSymbol::Term(input_top));
             }
-            while child_count.last() == Some(&1) {
-                let reducers = reducer_stack.pop().unwrap();
-                let reducer: &Reducer<T, Ast> = &reducers[reducer_select.pop().unwrap()];
-                reducer(&mut ast_stack);
-                child_count.pop();
-            }
-            if !child_count.is_empty() {
-                let last_idx = child_count.len() - 1;
-                if last_idx == 0 && child_count[last_idx] == 0 {
-                    break;
+            while !reducer_stack.is_empty()
+                && reducer_stack[reducer_stack.len() - 1].child_count <= 1
+            {
+                let i = reducer_stack.len() - 1;
+                if reducer_stack[i].reducers.len() > 0 {
+                    assert!(reducer_stack[i].propagation.is_some());
+                    reducer_stack[i].reducers[reducer_stack[i].propagation.unwrap()](
+                        &mut ast_stack,
+                    );
+                } else if i > 0 {
+                    assert!(reducer_stack[i - 1].propagation.is_none());
+                    reducer_stack[i - 1].propagation = reducer_stack[i].propagation;
                 }
-                child_count[last_idx] -= 1;
+                reducer_stack.pop();
+            }
+            if !reducer_stack.is_empty() {
+                let i = reducer_stack.len() - 1;
+                reducer_stack[i].child_count -= 1;
             }
         } else if let SymbolId::NTerm(id) = top_state {
-            if let Some(rewrite) = &tbl[id][*input_id.last().ok_or(Error::SyntaxError)?] {
-                println!("rewrite by {:?}", rewrite.words);
+            if let Some(rewrite) = &tbl[id][*input_id
+                .last()
+                .ok_or_else(|| Error::SyntaxError(format!("stack remains {} {:?}", id, state)))?]
+            {
                 if let IReducer::Tag(tag) = rewrite.reducer {
-                    reducer_select.push(tag);
-                    if !rewrite.words.is_empty() {
-                        reducer_select.push(0);
-                        reducer_stack.push(vec![noop.clone()]);
-                    }
+                    reducer_stack.push(Node {
+                        reducers: vec![],
+                        propagation: Some(tag),
+                        child_count: rewrite.words.len(),
+                    });
                 } else if let IReducer::Direct(reducer) = &rewrite.reducer {
-                    reducer_select.push(0);
-                    reducer_stack.push(vec![reducer.clone()]);
+                    reducer_stack.push(Node {
+                        reducers: vec![reducer.clone()],
+                        propagation: Some(0),
+                        child_count: rewrite.words.len(),
+                    });
                 } else if let IReducer::Root(reducers) = &rewrite.reducer {
-                    reducer_stack.push(reducers.clone());
+                    reducer_stack.push(Node {
+                        reducers: reducers.clone(),
+                        propagation: None,
+                        child_count: rewrite.words.len(),
+                    });
                 } else if let IReducer::Nop = &rewrite.reducer {
-                    reducer_select.push(0);
-                    reducer_stack.push(vec![noop.clone()]);
+                    reducer_stack.push(Node {
+                        reducers: vec![],
+                        propagation: None,
+                        child_count: rewrite.words.len(),
+                    });
                 }
                 if rewrite.words.is_empty() {
-                    while child_count.last() == Some(&1) {
-                        let reducers = reducer_stack.pop().unwrap();
-                        let reducer: &Reducer<T, Ast> = &reducers[reducer_select.pop().unwrap()];
-                        reducer(&mut ast_stack);
-                        child_count.pop();
-                    }
-                    if !child_count.is_empty() {
-                        let last_idx = child_count.len() - 1;
-                        if last_idx == 0 && child_count[last_idx] == 0 {
-                            break;
+                    while !reducer_stack.is_empty()
+                        && reducer_stack[reducer_stack.len() - 1].child_count <= 1
+                    {
+                        let i = reducer_stack.len() - 1;
+                        if reducer_stack[i].reducers.len() > 0 {
+                            assert!(reducer_stack[i].propagation.is_some());
+                            reducer_stack[i].reducers[reducer_stack[i].propagation.unwrap()](
+                                &mut ast_stack,
+                            );
+                        } else if i > 0 {
+                            assert!(reducer_stack[i - 1].propagation.is_none());
+                            reducer_stack[i - 1].propagation = reducer_stack[i].propagation;
                         }
-                        child_count[last_idx] -= 1;
+                        reducer_stack.pop();
                     }
-                } else {
-                    child_count.push(rewrite.words.len());
+                    if !reducer_stack.is_empty() {
+                        let i = reducer_stack.len() - 1;
+                        reducer_stack[i].child_count -= 1;
+                    }
                 }
                 for id in rewrite.words.iter().rev() {
                     state.push(id.clone());
                 }
             } else {
-                println!("rule not found");
-                return Err(Error::SyntaxError);
+                return Err(Error::SyntaxError(format!(
+                    "rule not found for {} {:?}",
+                    id,
+                    input_id.last()
+                )));
             }
         }
     }
-    if child_count.is_empty() && input_id.is_empty() && ast_stack.len() == 1 {
+    if reducer_stack.is_empty() && input_id.is_empty() && ast_stack.len() == 1 {
         if let ReduceSymbol::Ast(ast) = &ast_stack[0] {
             return Ok(ast.clone());
         }
     }
-    println!("exit with failed {:?} {:?}", input_id, ast_stack);
-    Err(Error::SyntaxError)
+    println!("input {:?}", input_id);
+    Err(Error::SyntaxError(format!(
+        "Ast yet reduced completely {:?} {:?}",
+        input_id,
+        ast_stack.len(),
+    )))
 }
 
 #[cfg(test)]
