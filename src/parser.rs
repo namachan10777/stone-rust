@@ -28,9 +28,18 @@ use std::rc::Rc;
 pub enum Token {
     LP,
     RP,
+    Str(String),
     Num(f64),
     Add,
     Sub,
+    Mul,
+    Div,
+    Equal,
+    Less,
+    Gret,
+    Or,
+    And,
+    Assign,
     Semicolon,
     EOL,
     LB,
@@ -42,7 +51,7 @@ pub enum Token {
 }
 
 impl Terminal for Token {
-    const N: usize = 13;
+    const N: usize = 19;
     fn accept(&self) -> bool {
         if let Token::Num(_) = self {
             return true;
@@ -56,14 +65,23 @@ impl Terminal for Token {
             Token::Num(_) => 2,
             Token::Add => 3,
             Token::Sub => 4,
-            Token::Semicolon => 5,
-            Token::EOL => 6,
-            Token::LB => 7,
-            Token::RB => 8,
-            Token::If => 9,
-            Token::Else => 10,
-            Token::While => 11,
-            Token::EOF => 12,
+            Token::Mul => 3,
+            Token::Div => 4,
+            Token::Equal => 5,
+            Token::Less => 6,
+            Token::Gret => 7,
+            Token::Or => 8,
+            Token::And => 9,
+            Token::Assign => 10,
+            Token::Semicolon => 11,
+            Token::EOL => 12,
+            Token::LB => 13,
+            Token::RB => 14,
+            Token::If => 15,
+            Token::Else => 16,
+            Token::While => 17,
+            Token::EOF => 18,
+            Token::Str(_) => 19,
         }
     }
 }
@@ -105,8 +123,17 @@ impl NonTerminal for NonTerm {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Num(f64),
+    Str(String),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+    Div(Box<Expr>, Box<Expr>),
+    Equal(Box<Expr>, Box<Expr>),
+    Less(Box<Expr>, Box<Expr>),
+    Gret(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Assign(String, Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

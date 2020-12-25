@@ -12,6 +12,30 @@ fn match_str(src: &str, compare: &str) -> Option<usize> {
     }
 }
 
+fn match_strlit(src: &str) -> Option<usize> {
+    if src.len() < 2 || &src[0..1] != "\"" {
+        return None;
+    }
+    let mut cnt = 1;
+    loop {
+        if cnt >= src.len() {
+            return None;
+        }
+        if cnt <= src.len() - 2 {
+            if let "\\\"" | "\\\\" = &src[cnt..cnt+2] {
+                cnt += 2;
+                continue;
+            }
+        }
+        else {
+            if let "\"" = &src[cnt..cnt+1] {
+                return Some(cnt+1);
+            }
+        }
+        cnt += 1;
+    }
+}
+
 // TODO 実装サボっており整数のみしか扱えません
 fn match_num(src: &str) -> Option<usize> {
     if src.is_empty() {
@@ -67,6 +91,9 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
         } else if let Some(step) = match_num(remain) {
             tokens.push(Token::Num(src[begin..begin + step].parse().unwrap()));
             begin += step;
+        }  else if let Some(step) = match_strlit(remain) {
+            tokens.push(Token::Str(src[begin+1..step-2].to_string()));
+            begin += step;
         } else if let Some(step) = match_str(remain, "(") {
             tokens.push(Token::LP);
             begin += step;
@@ -78,6 +105,30 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
             begin += step;
         } else if let Some(step) = match_str(remain, "-") {
             tokens.push(Token::Sub);
+            begin += step;
+        } else if let Some(step) = match_str(remain, "*") {
+            tokens.push(Token::Mul);
+            begin += step;
+        } else if let Some(step) = match_str(remain, "/") {
+            tokens.push(Token::Div);
+            begin += step;
+        } else if let Some(step) = match_str(remain, "==") {
+            tokens.push(Token::Equal);
+            begin += step;
+        } else if let Some(step) = match_str(remain, ">") {
+            tokens.push(Token::Gret);
+            begin += step;
+        } else if let Some(step) = match_str(remain, "<") {
+            tokens.push(Token::Less);
+            begin += step;
+        } else if let Some(step) = match_str(remain, "&&") {
+            tokens.push(Token::And);
+            begin += step;
+        } else if let Some(step) = match_str(remain, "||") {
+            tokens.push(Token::Or);
+            begin += step;
+        } else if let Some(step) = match_str(remain, "=") {
+            tokens.push(Token::Assign);
             begin += step;
         } else if let Some(step) = match_str(remain, ";") {
             tokens.push(Token::Semicolon);
@@ -131,5 +182,12 @@ mod test {
                 Token::EOF
             ])
         );
+    }
+
+    #[test]
+    fn strlit() {
+        assert_eq!(match_strlit("\"hoge\""), Some(6));
+        assert_eq!(match_strlit("\"hoge"), None);
+        assert_eq!(match_strlit("\"ho\\\"ge\""), Some(8));
     }
 }
