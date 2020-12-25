@@ -1,16 +1,14 @@
 use crate::parser::Token;
 use crate::Error;
 
-const PRINT: &str = "print";
-
 fn match_str(src: &str, compare: &str) -> Option<usize> {
     if compare.len() > src.len() {
         return None;
     }
     if &src[0..compare.len()] == compare {
-        return Some(compare.len());
+        Some(compare.len())
     } else {
-        return None;
+        None
     }
 }
 
@@ -31,9 +29,9 @@ fn match_num(src: &str) -> Option<usize> {
         cnt += 1;
     }
     if cnt != 0 {
-        return Some(cnt);
+        Some(cnt)
     } else {
-        return None;
+        None
     }
 }
 
@@ -53,9 +51,9 @@ fn match_white(src: &str) -> Option<usize> {
         cnt += 1;
     }
     if cnt != 0 {
-        return Some(cnt);
+        Some(cnt)
     } else {
-        return None;
+        None
     }
 }
 

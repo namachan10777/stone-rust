@@ -46,10 +46,7 @@ pub struct Internal {
 pub fn entry(src_path: &str) -> Result<(), Error> {
     let src = fs::read_to_string(src_path).map_err(|_| Error::IOError)?;
     let tokens = lexer::lex(&src)?;
-    /*let ast = parser::ll1(tokens)?;
+    let ast = parser::parse(tokens)?;
     println!("{:?}", ast);
-    let flat = ir::compile(ast);
-    let mut vm = vm::Vm::compile(flat);
-    vm.execute().map_err(Error::RuntimeError)*/
-    unimplemented!()
+    Ok(())
 }

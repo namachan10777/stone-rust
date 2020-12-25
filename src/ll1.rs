@@ -154,7 +154,7 @@ impl<T: fmt::Debug, Ast: fmt::Debug> PartialEq for IRule<T, Ast> {
 
 // key is a cardinal of non-terminal symbol
 pub type Rules<T, Ast> = HashMap<usize, Vec<Rule<T, Ast>>>;
-pub type IRules<T, Ast> = Vec<Vec<IRule<T, Ast>>>;
+type IRules<T, Ast> = Vec<Vec<IRule<T, Ast>>>;
 
 /*fn gen_fluxed_and_lasts_rule<T, Ast>(
     rules: &[Rule<T, Ast>],
@@ -274,7 +274,7 @@ fn cmp_rule<T: fmt::Debug, Ast: fmt::Debug>(a: &Rule<T, Ast>, b: &Rule<T, Ast>) 
 
 fn n_sames(rules: &[(usize, Vec<SymbolId>)]) -> usize {
     let mut cnt = 0;
-    if rules.len() == 0 {
+    if rules.is_empty() {
         return 0;
     }
     'outer: loop {
@@ -288,13 +288,15 @@ fn n_sames(rules: &[(usize, Vec<SymbolId>)]) -> usize {
         }
         cnt += 1;
     }
-    return cnt;
+    cnt
 }
 
+type Splited<T, Ast> = (Vec<IRule<T, Ast>>, Vec<Vec<IRule<T, Ast>>>);
+
 fn split_rules<T: fmt::Debug, Ast: fmt::Debug>(
-    rule: &Vec<(usize, Vec<SymbolId>)>,
+    rule: &[(usize, Vec<SymbolId>)],
     nterm_offset: usize,
-) -> Result<(Vec<IRule<T, Ast>>, Vec<Vec<IRule<T, Ast>>>), Error> {
+) -> Result<Splited<T, Ast>, Error> {
     let mut rule = rule.to_vec();
     rule.sort_by(|a, b| cmp_symbolid_option(a.1.get(0), b.1.get(0)));
     let mut new_rule = Vec::new();
@@ -364,7 +366,7 @@ fn remove_common<T: fmt::Debug, Ast: fmt::Debug>(
     rule_sorted.sort_by(|a, b| a.0.cmp(&b.0));
     let mut new_rules = Vec::new();
     let mut n_rules = rule_sorted.len();
-    new_rules.resize_with(n_rules, || Vec::new());
+    new_rules.resize(n_rules, Vec::new());
     for (nidx, mut nterm) in rule_sorted {
         let reducers: Vec<Reducer<T, Ast>> = nterm
             .iter()
@@ -414,6 +416,9 @@ mod test {
     }
 
     macro_rules! set {
+        { } => {
+            HashSet::new()
+        };
         { $($value:expr),* } => {
             {
                 let mut hash = HashSet::new();
@@ -702,7 +707,6 @@ mod test {
 
     #[test]
     fn test_all_firsts() {
-        let reducer: Reducer<(), ()> = Rc::new(Box::new(|_: &mut Vec<ReduceSymbol<(), ()>>| {}));
         let removed: IRules<(), ()> = vec![
             vec![
                 IRule {
@@ -926,7 +930,7 @@ mod test {
             ]
         };
         let removed = remove_common(rules).unwrap();
-        let tbl = gen_table(removed);
+        let tbl = gen_table(&removed);
         let r_expr = IRule {
             words: vec![NTerm::Term.id(), SymbolId::NTerm(3)],
             reducer: IReducer::Root(vec![reducer.clone(), reducer.clone()]),
@@ -1007,7 +1011,7 @@ type FirstSet = Vec<Vec<SymbolSet>>;
 type FollowSet = Vec<HashSet<usize>>;
 
 fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
-    rules: &IRules<T, Ast>,
+    rules: &[Vec<IRule<T, Ast>>],
 ) -> Result<AllFirstSet, Error> {
     let mut fiw = Vec::new();
     let mut fia = Vec::new();
@@ -1088,7 +1092,7 @@ fn all_firsts<T: fmt::Debug, Ast: fmt::Debug>(
     Ok(fiw)
 }
 
-fn firsts<T: fmt::Debug, Ast: fmt::Debug>(rules: &IRules<T, Ast>) -> Result<FirstSet, Error> {
+fn firsts<T: fmt::Debug, Ast: fmt::Debug>(rules: &[Vec<IRule<T, Ast>>]) -> Result<FirstSet, Error> {
     all_firsts(&rules).map(|firsts| {
         firsts
             .iter()
@@ -1103,11 +1107,13 @@ fn firsts<T: fmt::Debug, Ast: fmt::Debug>(rules: &IRules<T, Ast>) -> Result<Firs
 }
 
 /// (id of non-terminal symbol, id of rule in the non-terminal symbol) -> id of terminal symbol
-fn follows<T: fmt::Debug, Ast: fmt::Debug>(rules: &IRules<T, Ast>) -> Result<FollowSet, Error> {
+fn follows<T: fmt::Debug, Ast: fmt::Debug>(
+    rules: &[Vec<IRule<T, Ast>>],
+) -> Result<FollowSet, Error> {
     let mut fo = FollowSet::new();
     let mut changed = true;
-    fo.resize_with(rules.len(), || Default::default());
-    let firsts = all_firsts(&rules)?;
+    fo.resize(rules.len(), Default::default());
+    let firsts = all_firsts(rules)?;
     let mut count = 0;
     while changed {
         count += 1;
@@ -1141,10 +1147,10 @@ fn follows<T: fmt::Debug, Ast: fmt::Debug>(rules: &IRules<T, Ast>) -> Result<Fol
 type Table<T, Ast> = Vec<Vec<Option<IRule<T, Ast>>>>;
 
 fn gen_table<T: Terminal + fmt::Debug, Ast: fmt::Debug>(
-    rules: IRules<T, Ast>,
+    rules: &[Vec<IRule<T, Ast>>],
 ) -> Result<Table<T, Ast>, Error> {
     let mut tbl = Vec::new();
-    tbl.resize_with(rules.len(), || Vec::new());
+    tbl.resize(rules.len(), Vec::new());
     tbl.iter_mut().for_each(|v| v.resize_with(T::N, || None));
     let firsts = firsts(&rules)?;
     let follows = follows(&rules)?;
@@ -1175,7 +1181,7 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
     for (idx, x) in removed.iter().enumerate() {
         println!("{} {:?}", idx, x);
     }
-    let tbl = gen_table(removed)?;
+    let tbl = gen_table(&removed)?;
     input.reverse();
     let mut input_id = input
         .iter()
@@ -1258,15 +1264,13 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
             }
         }
     }
-    if child_count.is_empty() && input_id.is_empty() {
-        if ast_stack.len() == 1 {
-            if let ReduceSymbol::Ast(ast) = &ast_stack[0] {
-                return Ok(ast.clone());
-            }
+    if child_count.is_empty() && input_id.is_empty() && ast_stack.len() == 1 {
+        if let ReduceSymbol::Ast(ast) = &ast_stack[0] {
+            return Ok(ast.clone());
         }
     }
     println!("exit with failed {:?} {:?}", input_id, ast_stack);
-    return Err(Error::SyntaxError);
+    Err(Error::SyntaxError)
 }
 
 #[cfg(test)]
@@ -1278,18 +1282,6 @@ mod full_test {
                 let mut hash = HashMap::new();
                 $(
                     hash.insert($key, $value);
-                )*
-                hash
-            }
-        };
-    }
-
-    macro_rules! set {
-        { $($value:expr),* } => {
-            {
-                let mut hash = HashSet::new();
-                $(
-                    hash.insert($value);
                 )*
                 hash
             }
@@ -1349,24 +1341,24 @@ mod full_test {
     }
 
     fn gen_rule() -> Rules<Term, i64> {
-        let reduce_top: Reducer<Term, i64> = Rc::new(Box::new(|s| {}));
+        let reduce_top: Reducer<Term, i64> = Rc::new(Box::new(|_| {}));
 
-        let reduce_top1: Reducer<Term, i64> = Rc::new(Box::new(|s| {}));
+        let reduce_top1: Reducer<Term, i64> = Rc::new(Box::new(|_| {}));
 
-        let reduce_top2: Reducer<Term, i64> = Rc::new(Box::new(|s| {}));
-        let reduce_num: Reducer<Term, i64> = Rc::new(Box::new(|mut stack| {
+        let reduce_top2: Reducer<Term, i64> = Rc::new(Box::new(|_| {}));
+        let reduce_num: Reducer<Term, i64> = Rc::new(Box::new(|stack| {
             if let ReduceSymbol::Term(Term::Num(n)) = stack.pop().unwrap() {
                 stack.push(ReduceSymbol::Ast(n));
             }
         }));
-        let reduce_add: Reducer<Term, i64> = Rc::new(Box::new(|mut stack| {
+        let reduce_add: Reducer<Term, i64> = Rc::new(Box::new(|stack| {
             if let ReduceSymbol::Ast(n) = stack.pop().unwrap() {
                 if let ReduceSymbol::Ast(m) = stack.pop().unwrap() {
                     stack.push(ReduceSymbol::Ast(n + m));
                 }
             }
         }));
-        let reduce_mul: Reducer<Term, i64> = Rc::new(Box::new(|mut stack| {
+        let reduce_mul: Reducer<Term, i64> = Rc::new(Box::new(|stack| {
             if let ReduceSymbol::Ast(n) = stack.pop().unwrap() {
                 if let ReduceSymbol::Ast(m) = stack.pop().unwrap() {
                     stack.push(ReduceSymbol::Ast(n * m));
