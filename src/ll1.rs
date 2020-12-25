@@ -1201,9 +1201,6 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
     let mut ast_stack = Vec::new();
     let mut reducer_stack: Vec<Node<T, Ast>> = Vec::new();
     let mut state = Vec::new();
-    let noop: Reducer<T, Ast> = Rc::new(Box::new(|_| {
-        println!("noop");
-    }));
     state.push(top.id());
     // reduce -> reducer + 1, child_count + 1
     while !state.is_empty() {
@@ -1224,7 +1221,7 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
                 && reducer_stack[reducer_stack.len() - 1].child_count <= 1
             {
                 let i = reducer_stack.len() - 1;
-                if reducer_stack[i].reducers.len() > 0 {
+                if !reducer_stack[i].reducers.is_empty() {
                     assert!(reducer_stack[i].propagation.is_some());
                     reducer_stack[i].reducers[reducer_stack[i].propagation.unwrap()](
                         &mut ast_stack,
@@ -1274,7 +1271,7 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
                         && reducer_stack[reducer_stack.len() - 1].child_count <= 1
                     {
                         let i = reducer_stack.len() - 1;
-                        if reducer_stack[i].reducers.len() > 0 {
+                        if !reducer_stack[i].reducers.is_empty() {
                             assert!(reducer_stack[i].propagation.is_some());
                             reducer_stack[i].reducers[reducer_stack[i].propagation.unwrap()](
                                 &mut ast_stack,
