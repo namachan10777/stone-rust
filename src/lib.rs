@@ -8,7 +8,7 @@ mod vm;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    LexerError,
+    LexerError(usize),
     SyntaxError(ll1::Error),
     TypeError,
     IOError,

@@ -1,0 +1,9 @@
+if 1 {
+  str = "x"
+  i = 0
+  while i < 10 {
+    str = str + "x"
+    i = i - 1
+  }
+  str
+}

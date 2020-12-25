@@ -22,14 +22,16 @@ fn match_strlit(src: &str) -> Option<usize> {
             return None;
         }
         if cnt <= src.len() - 2 {
-            if let "\\\"" | "\\\\" = &src[cnt..cnt+2] {
+            if let "\\\"" | "\\\\" = &src[cnt..cnt + 2] {
                 cnt += 2;
                 continue;
             }
-        }
-        else {
-            if let "\"" = &src[cnt..cnt+1] {
-                return Some(cnt+1);
+            else if let "\"" = &src[cnt..cnt + 1] {
+                return Some(cnt + 1);
+            }
+        } else {
+            if let "\"" = &src[cnt..cnt + 1] {
+                return Some(cnt + 1);
             }
         }
         cnt += 1;
@@ -81,6 +83,21 @@ fn match_white(src: &str) -> Option<usize> {
     }
 }
 
+fn match_ident(src: &str) -> Option<usize> {
+    if src.is_empty() {
+        return None;
+    }
+    for (idx, c) in src.chars().enumerate() {
+        if !c.is_alphabetic() {
+            if idx == 0 {
+                return None;
+            }
+            return Some(idx);
+        }
+    }
+    return Some(src.len());
+}
+
 pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
     let mut tokens = Vec::new();
     let mut begin = 0;
@@ -91,8 +108,8 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
         } else if let Some(step) = match_num(remain) {
             tokens.push(Token::Num(src[begin..begin + step].parse().unwrap()));
             begin += step;
-        }  else if let Some(step) = match_strlit(remain) {
-            tokens.push(Token::Str(src[begin+1..step-2].to_string()));
+        } else if let Some(step) = match_strlit(remain) {
+            tokens.push(Token::Str(src[begin + 1..begin+step - 2].to_string()));
             begin += step;
         } else if let Some(step) = match_str(remain, "(") {
             tokens.push(Token::LP);
@@ -148,11 +165,14 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
         } else if let Some(step) = match_str(remain, "while") {
             tokens.push(Token::While);
             begin += step;
+        }  else if let Some(step) = match_ident(remain) {
+            tokens.push(Token::Var(src[begin..begin+step].to_string()));
+            begin += step;
         } else if let Some(step) = match_str(remain, "\n") {
             tokens.push(Token::EOL);
             begin += step;
         } else {
-            return Err(Error::LexerError);
+            return Err(Error::LexerError(begin));
         }
     }
     while tokens.last() == Some(&Token::EOL) {
@@ -189,5 +209,10 @@ mod test {
         assert_eq!(match_strlit("\"hoge\""), Some(6));
         assert_eq!(match_strlit("\"hoge"), None);
         assert_eq!(match_strlit("\"ho\\\"ge\""), Some(8));
+    }
+
+    #[test]
+    fn ident() {
+        assert_eq!(match_ident("hoge &"), Some(4));
     }
 }
