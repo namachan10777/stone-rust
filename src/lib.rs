@@ -47,6 +47,6 @@ pub fn entry(src_path: &str) -> Result<(), Error> {
     let src = fs::read_to_string(src_path).map_err(|_| Error::IOError)?;
     let tokens = lexer::lex(&src)?;
     let ast = parser::parse(tokens)?;
-    println!("{:?}", ast);
+    println!("{:#?}", ast);
     Ok(())
 }
