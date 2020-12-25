@@ -25,14 +25,11 @@ fn match_strlit(src: &str) -> Option<usize> {
             if let "\\\"" | "\\\\" = &src[cnt..cnt + 2] {
                 cnt += 2;
                 continue;
-            }
-            else if let "\"" = &src[cnt..cnt + 1] {
+            } else if let "\"" = &src[cnt..cnt + 1] {
                 return Some(cnt + 1);
             }
-        } else {
-            if let "\"" = &src[cnt..cnt + 1] {
-                return Some(cnt + 1);
-            }
+        } else if let "\"" = &src[cnt..cnt + 1] {
+            return Some(cnt + 1);
         }
         cnt += 1;
     }
@@ -95,7 +92,7 @@ fn match_ident(src: &str) -> Option<usize> {
             return Some(idx);
         }
     }
-    return Some(src.len());
+    Some(src.len())
 }
 
 pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
@@ -109,7 +106,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
             tokens.push(Token::Num(src[begin..begin + step].parse().unwrap()));
             begin += step;
         } else if let Some(step) = match_strlit(remain) {
-            tokens.push(Token::Str(src[begin + 1..begin+step - 2].to_string()));
+            tokens.push(Token::Str(src[begin + 1..begin + step - 2].to_string()));
             begin += step;
         } else if let Some(step) = match_str(remain, "(") {
             tokens.push(Token::LP);
@@ -165,8 +162,8 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
         } else if let Some(step) = match_str(remain, "while") {
             tokens.push(Token::While);
             begin += step;
-        }  else if let Some(step) = match_ident(remain) {
-            tokens.push(Token::Var(src[begin..begin+step].to_string()));
+        } else if let Some(step) = match_ident(remain) {
+            tokens.push(Token::Var(src[begin..begin + step].to_string()));
             begin += step;
         } else if let Some(step) = match_str(remain, "\n") {
             tokens.push(Token::EOL);
