@@ -1204,10 +1204,6 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
     state.push(top.id());
     // reduce -> reducer + 1, child_count + 1
     while !state.is_empty() {
-        println!("{:?}", reducer_stack);
-        println!("------------------------");
-        println!("{:?}", state);
-        /*println!("{:?}", state);*/
         let top_state = state.pop().unwrap();
         if let SymbolId::Term(id) = top_state {
             if input_id.pop() != Some(id) {
@@ -1304,7 +1300,6 @@ pub fn ll1<T: Terminal + fmt::Debug, NT: NonTerminal, Ast: Clone + fmt::Debug>(
             return Ok(ast.clone());
         }
     }
-    println!("input {:?}", input_id);
     Err(Error::SyntaxError(format!(
         "Ast yet reduced completely {:?} {:?}",
         input_id,

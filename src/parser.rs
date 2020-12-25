@@ -143,14 +143,11 @@ fn gen_rules() -> Rules<Token, Ast> {
         vec![
             Rule {
                 words: vec![Token::LP.id(), NonTerm::Expr.id(), Token::RP.id()],
-                reducer: Rc::new(Box::new(|stack| {
-                    println!("primary {:?}", stack);
-                })),
+                reducer: Rc::new(Box::new(|_| {})),
             },
             Rule {
                 words: vec![Token::Num(0.0).id()],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("primary {:?}", stack);
                     if let Some(ReduceSymbol::Term(Token::Num(n))) = stack.pop() {
                         stack.push(ReduceSymbol::Ast(Ast::Expr(Expr::Num(n))));
                         return;
@@ -166,17 +163,14 @@ fn gen_rules() -> Rules<Token, Ast> {
         vec![
             Rule {
                 words: vec![NonTerm::Primary.id()],
-                reducer: Rc::new(Box::new(|stack| {
-                    println!("expr {:?}", stack);
-                })),
+                reducer: Rc::new(Box::new(|_| {})),
             },
             Rule {
-                words: vec![NonTerm::Primary.id(), Token::Add.id(), NonTerm::Expr.id()],
+                words: vec![NonTerm::Primary.id(), Token::Sub.id(), NonTerm::Expr.id()],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("expr {:?}", stack);
                     if let Some(ReduceSymbol::Ast(Ast::Expr(rhr))) = stack.pop() {
                         if let Some(ReduceSymbol::Ast(Ast::Expr(lhr))) = stack.pop() {
-                            stack.push(ReduceSymbol::Ast(Ast::Expr(Expr::Add(
+                            stack.push(ReduceSymbol::Ast(Ast::Expr(Expr::Sub(
                                 Box::new(lhr),
                                 Box::new(rhr),
                             ))));
@@ -187,12 +181,11 @@ fn gen_rules() -> Rules<Token, Ast> {
                 })),
             },
             Rule {
-                words: vec![NonTerm::Primary.id(), Token::Sub.id(), NonTerm::Expr.id()],
+                words: vec![NonTerm::Primary.id(), Token::Add.id(), NonTerm::Expr.id()],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("expr {:?}", stack);
                     if let Some(ReduceSymbol::Ast(Ast::Expr(rhr))) = stack.pop() {
                         if let Some(ReduceSymbol::Ast(Ast::Expr(lhr))) = stack.pop() {
-                            stack.push(ReduceSymbol::Ast(Ast::Expr(Expr::Sub(
+                            stack.push(ReduceSymbol::Ast(Ast::Expr(Expr::Add(
                                 Box::new(lhr),
                                 Box::new(rhr),
                             ))));
@@ -212,14 +205,11 @@ fn gen_rules() -> Rules<Token, Ast> {
                 words: vec![],
                 reducer: Rc::new(Box::new(|stack| {
                     stack.push(ReduceSymbol::Ast(Ast::StmtList(vec![])));
-                    println!("stmt_opt {:?}", stack);
                 })),
             },
             Rule {
                 words: vec![NonTerm::Stmt.id()],
-                reducer: Rc::new(Box::new(|stack| {
-                    println!("stmt_opt {:?}", stack);
-                })),
+                reducer: Rc::new(Box::new(|_| {})),
             },
         ],
     );
@@ -234,12 +224,10 @@ fn gen_rules() -> Rules<Token, Ast> {
                     NonTerm::StmtList2.id(),
                 ],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("stmt_list2_1 {:?}", stack);
                     if let Some(ReduceSymbol::Ast(Ast::StmtList(mut l2))) = stack.pop() {
                         if let Some(ReduceSymbol::Ast(Ast::StmtList(mut l1))) = stack.pop() {
                             l1.append(&mut l2);
                             stack.push(ReduceSymbol::Ast(Ast::StmtList(l1)));
-                            println!("-> stmt_list2_1 {:?}", stack);
                             return;
                         }
                     }
@@ -249,9 +237,7 @@ fn gen_rules() -> Rules<Token, Ast> {
             Rule {
                 words: vec![],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("stmt_list2_2 {:?}", stack);
                     stack.push(ReduceSymbol::Ast(Ast::StmtList(vec![])));
-                    println!("-> stmt_list2_2 {:?}", stack);
                 })),
             },
         ],
@@ -262,15 +248,11 @@ fn gen_rules() -> Rules<Token, Ast> {
         vec![
             Rule {
                 words: vec![Token::EOL.id()],
-                reducer: Rc::new(Box::new(|stack| {
-                    println!("stmt_delim_1 {:?}", stack);
-                })),
+                reducer: Rc::new(Box::new(|_| {})),
             },
             Rule {
                 words: vec![Token::Semicolon.id()],
-                reducer: Rc::new(Box::new(|stack| {
-                    println!("stmt_delim_2 {:?}", stack);
-                })),
+                reducer: Rc::new(Box::new(|_| {})),
             },
         ],
     );
@@ -281,7 +263,6 @@ fn gen_rules() -> Rules<Token, Ast> {
         vec![Rule {
             words: vec![NonTerm::StmtOpt.id(), NonTerm::StmtList2.id()],
             reducer: Rc::new(Box::new(|stack| {
-                println!("stmt_list {:?}", stack);
                 if let Some(ReduceSymbol::Ast(Ast::StmtList(mut l2))) = stack.pop() {
                     if let Some(ReduceSymbol::Ast(Ast::StmtList(mut l1))) = stack.pop() {
                         l2.append(&mut l1);
@@ -303,9 +284,7 @@ fn gen_rules() -> Rules<Token, Ast> {
                 NonTerm::StmtList.id(),
                 Token::RB.id(),
             ],
-            reducer: Rc::new(Box::new(|stack| {
-                println!("block {:?}", stack);
-            })),
+            reducer: Rc::new(Box::new(|_| {})),
         }],
     );
     //  7. simple -> expr
@@ -313,9 +292,7 @@ fn gen_rules() -> Rules<Token, Ast> {
         NonTerm::Simple.cardinal(),
         vec![Rule {
             words: vec![NonTerm::Expr.id()],
-            reducer: Rc::new(Box::new(|stack| {
-                println!("simple {:?}", stack);
-            })),
+            reducer: Rc::new(Box::new(|_| {})),
         }],
     );
     // 8. else_part -> 空 | "else" block
@@ -325,15 +302,12 @@ fn gen_rules() -> Rules<Token, Ast> {
             Rule {
                 words: vec![],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("else_part {:?}", stack);
                     stack.push(ReduceSymbol::Ast(Ast::StmtList(vec![])));
                 })),
             },
             Rule {
                 words: vec![Token::Else.id(), NonTerm::Block.id()],
-                reducer: Rc::new(Box::new(|stack| {
-                    println!("else_part {:?}", stack);
-                })),
+                reducer: Rc::new(Box::new(|_| {})),
             },
         ],
     );
@@ -349,7 +323,6 @@ fn gen_rules() -> Rules<Token, Ast> {
                     NonTerm::ElsePart.id(),
                 ],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("statement {:?}", stack);
                     if let Some(ReduceSymbol::Ast(Ast::StmtList(else_part))) = stack.pop() {
                         if let Some(ReduceSymbol::Ast(Ast::StmtList(then_part))) = stack.pop() {
                             if let Some(ReduceSymbol::Ast(Ast::Expr(cond))) = stack.pop() {
@@ -366,7 +339,6 @@ fn gen_rules() -> Rules<Token, Ast> {
             Rule {
                 words: vec![Token::While.id(), NonTerm::Expr.id(), NonTerm::Block.id()],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("statement {:?}", stack);
                     if let Some(ReduceSymbol::Ast(Ast::StmtList(block))) = stack.pop() {
                         if let Some(ReduceSymbol::Ast(Ast::Expr(cond))) = stack.pop() {
                             stack.push(ReduceSymbol::Ast(Ast::StmtList(vec![Stmt::While(
@@ -381,7 +353,6 @@ fn gen_rules() -> Rules<Token, Ast> {
             Rule {
                 words: vec![NonTerm::Simple.id()],
                 reducer: Rc::new(Box::new(|stack| {
-                    println!("statement {:?}", stack);
                     if let Some(ReduceSymbol::Ast(Ast::Expr(e))) = stack.pop() {
                         stack.push(ReduceSymbol::Ast(Ast::StmtList(vec![Stmt::Simple(e)])));
                         return;
@@ -396,12 +367,9 @@ fn gen_rules() -> Rules<Token, Ast> {
         NonTerm::Program.cardinal(),
         vec![Rule {
             words: vec![NonTerm::StmtList.id(), Token::EOF.id()],
-            reducer: Rc::new(Box::new(|_| {
-                println!("program");
-            })),
+            reducer: Rc::new(Box::new(|_| {})),
         }],
     );
-    println!("{}", rules.len());
     rules
 }
 
@@ -420,7 +388,6 @@ mod test {
     #[test]
     fn expr() {
         let tokens = super::super::lexer::lex("1").unwrap();
-        println!("{:?}", tokens);
         let parsed = parse(tokens);
         assert_eq!(parsed.unwrap(), vec![Stmt::Simple(Expr::Num(1.0))]);
         let tokens = super::super::lexer::lex("(1+2)-3").unwrap();
@@ -442,7 +409,6 @@ mod test {
         let parsed = parse(tokens);
         assert_eq!(parsed.unwrap(), vec![]);
         let tokens = super::super::lexer::lex("if 0 {\n1\n}\n").unwrap();
-        println!("{:?}", tokens);
         let parsed = parse(tokens);
         assert_eq!(
             parsed.unwrap(),
